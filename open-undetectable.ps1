@@ -6,6 +6,54 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+function Test-ProfileAlreadyRunningError {
+    param(
+        [Parameter(Mandatory = $false)]
+        [object]$ApiPayload,
+
+        [Parameter(Mandatory = $false)]
+        [string]$ExceptionText
+    )
+
+    $parts = @()
+
+    if ($ApiPayload) {
+        try {
+            # Serialize the full payload so nested messages (for example data.error) are searchable.
+            $parts += ($ApiPayload | ConvertTo-Json -Depth 10 -Compress)
+        }
+        catch {
+            $parts += [string]$ApiPayload
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExceptionText)) {
+        $parts += $ExceptionText
+    }
+
+    $combined = ($parts -join " | ").ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($combined)) {
+        return $false
+    }
+
+    $alreadyRunningPatterns = @(
+        "already running",
+        "already started",
+        "already open",
+        "already launched",
+        "profile is running",
+        "profile already"
+    )
+
+    foreach ($pattern in $alreadyRunningPatterns) {
+        if ($combined -like "*$pattern*") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 if (Test-Path -LiteralPath $ProfileStatePath) {
     Remove-Item -LiteralPath $ProfileStatePath -Force -ErrorAction SilentlyContinue
 }
@@ -67,9 +115,20 @@ try {
 
     # 4. Start the Profile via GET request as specified in docs
     Write-Host "`nLaunching profile: '$profileName'..." -ForegroundColor Cyan
-    $startResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/start/$profileId" -Method Get
+    $startResponse = $null
+    $startExceptionText = $null
+
+    try {
+        $startResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/start/$profileId" -Method Get
+    }
+    catch {
+        $startExceptionText = $_.Exception.Message
+    }
+
+    $isAlreadyRunning = Test-ProfileAlreadyRunningError -ApiPayload $startResponse -ExceptionText $startExceptionText
+    $isStarted = $startResponse -and ($startResponse.code -eq 0)
     
-    if ($startResponse.code -eq 0) {
+    if ($isStarted -or $isAlreadyRunning) {
         try {
             Set-Content -LiteralPath $ProfileStatePath -Value $profileName -Encoding UTF8 -ErrorAction Stop
         }
@@ -77,10 +136,21 @@ try {
             Write-Warning "Profile launched, but the selected profile title could not be saved for later focusing: $_"
         }
 
-        Write-Host "Profile started successfully!" -ForegroundColor Green
+        if ($isStarted) {
+            Write-Host "Profile started successfully!" -ForegroundColor Green
+        }
+        else {
+            Write-Host "Profile is already running. Treating as success." -ForegroundColor Green
+        }
     }
     else {
-        Write-Host "API returned an error starting the profile: $($startResponse.status)" -ForegroundColor Red
+        if ($startResponse) {
+            Write-Host "API returned an error starting the profile: $($startResponse.status)" -ForegroundColor Red
+        }
+        else {
+            Write-Host "An error occurred starting the profile: $startExceptionText" -ForegroundColor Red
+        }
+        Exit 1
     }
 
 }
