@@ -18,6 +18,7 @@ param (
     [string]$Group,
     [string[]]$Tags = @("random"),
     [string]$Notes,
+    [string]$CookiesPath,
     [switch]$DryRun
 )
 
@@ -155,6 +156,67 @@ function Add-EnglishLanguage {
     return ($tags -join ", ")
 }
 
+function Get-RandomCountryCookies {
+    param(
+        [Parameter(Mandatory = $true)][string]$CookiesRoot,
+        [Parameter(Mandatory = $false)][string]$ProxyName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProxyName)) {
+        return $null
+    }
+
+    if (-not (Test-Path -LiteralPath $CookiesRoot)) {
+        return $null
+    }
+
+    # Match a cookies subfolder (e.g. "germany") against the proxy name (e.g. "Germany Premium").
+    $normalized = $ProxyName.Trim().ToLowerInvariant()
+    $countryDir = $null
+    foreach ($dir in Get-ChildItem -LiteralPath $CookiesRoot -Directory -ErrorAction SilentlyContinue) {
+        $folderName = $dir.Name.Trim().ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($folderName)) {
+            continue
+        }
+
+        if ($normalized -eq $folderName -or $normalized -match ("\b" + [regex]::Escape($folderName) + "\b")) {
+            $countryDir = $dir
+            break
+        }
+    }
+
+    if ($null -eq $countryDir) {
+        return $null
+    }
+
+    $cookieFiles = @(Get-ChildItem -LiteralPath $countryDir.FullName -Filter "*.json" -File -ErrorAction SilentlyContinue)
+    if ($cookieFiles.Count -eq 0) {
+        Write-Warning "No cookie files found in '$($countryDir.FullName)'."
+        return $null
+    }
+
+    $cookieFile = $cookieFiles | Get-Random
+    try {
+        $rawCookies = Get-Content -LiteralPath $cookieFile.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Failed to parse cookie file '$($cookieFile.FullName)': $_"
+        return $null
+    }
+
+    $cookieArray = @($rawCookies | Where-Object { $null -ne $_ })
+    if ($cookieArray.Count -eq 0) {
+        Write-Warning "Cookie file '$($cookieFile.FullName)' contained no cookies."
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Country = $countryDir.Name
+        File    = $cookieFile.FullName
+        Cookies = $cookieArray
+    }
+}
+
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
 
 $configsResponse = Invoke-RestMethod -Uri "$ApiUrl/configslist" -Method Get -TimeoutSec 20
@@ -216,6 +278,7 @@ elseif ($RandomResolution) {
 
 # Auto-select a country-named proxy (unless one was passed) and align language to its country.
 $proxyCountryLanguage = $null
+$selectedProxyName = $null
 if ([string]::IsNullOrWhiteSpace($Proxy)) {
     $proxiesResponse = $null
     try {
@@ -242,6 +305,7 @@ if ([string]::IsNullOrWhiteSpace($Proxy)) {
         if ($countryProxies.Count -gt 0) {
             $selectedProxy = $countryProxies | Get-Random
             $Proxy = $selectedProxy.Id
+            $selectedProxyName = $selectedProxy.Name
             $proxyCountryLanguage = Add-EnglishLanguage -Language $selectedProxy.Language
             Write-Host "Selected country proxy '$($selectedProxy.Name)' -> language '$proxyCountryLanguage'." -ForegroundColor Cyan
         }
@@ -278,6 +342,19 @@ Add-PayloadValue -Payload $payload -Name "folder" -Value $Folder
 Add-PayloadValue -Payload $payload -Name "group" -Value $Group
 Add-PayloadValue -Payload $payload -Name "tags" -Value $Tags
 Add-PayloadValue -Payload $payload -Name "notes" -Value $Notes
+
+# Preload cookies for the selected proxy's country, if a matching /cookies/<country>/ folder exists.
+# The Create Profile API accepts "cookies" as a JSON array of cookie objects (the same format
+# Undetectable exports), so we parse the chosen file and pass its array straight through.
+if ([string]::IsNullOrWhiteSpace($CookiesPath)) {
+    $CookiesPath = Join-Path (Split-Path -Parent $PSScriptRoot) "cookies"
+}
+
+$cookieResult = Get-RandomCountryCookies -CookiesRoot $CookiesPath -ProxyName $selectedProxyName
+if ($null -ne $cookieResult) {
+    $payload["cookies"] = $cookieResult.Cookies
+    Write-Host "Loaded $($cookieResult.Cookies.Count) cookies for '$($cookieResult.Country)' from '$($cookieResult.File)'." -ForegroundColor Cyan
+}
 
 $payloadJson = $payload | ConvertTo-Json -Depth 10
 
