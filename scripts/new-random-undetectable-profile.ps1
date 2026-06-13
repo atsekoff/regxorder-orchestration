@@ -156,6 +156,24 @@ function Add-EnglishLanguage {
     return ($tags -join ", ")
 }
 
+function Get-LocationCode {
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Language
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Language)) {
+        return $null
+    }
+
+    # Use the region subtag of the first language tag (e.g. "de-DE, en" -> "DE").
+    $firstTag = (@($Language -split ",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })[0]
+    if ($firstTag -match "[-_](?<region>[A-Za-z]{2})$") {
+        return $Matches.region.ToUpperInvariant()
+    }
+
+    return $null
+}
+
 function Get-RandomCountryCookies {
     param(
         [Parameter(Mandatory = $true)][string]$CookiesRoot,
@@ -248,7 +266,7 @@ if ($configs.Count -eq 0) {
 }
 
 $selectedConfig = $configs | Get-Random
-$profileName = Get-Date -Format "yyyyMMdd-HHmmss"
+$profileTimestamp = Get-Date -Format "yyyyMMdd_HHmm"
 
 if ($Cpu -le 0) {
     $Cpu = $allowedCpu | Get-Random
@@ -323,6 +341,17 @@ elseif ($null -eq $Languages -or $Languages.Count -eq 0) {
 }
 else {
     $languageValue = $Languages -join ", "
+}
+
+# Profile name format: <LOCATION>_<DATETIME>, e.g. DE_20260613_1654. Location is the region
+# subtag of the selected language (which is aligned to the proxy country); fall back to just
+# the timestamp when no region is available.
+$locationCode = Get-LocationCode -Language $languageValue
+if ([string]::IsNullOrWhiteSpace($locationCode)) {
+    $profileName = $profileTimestamp
+}
+else {
+    $profileName = "${locationCode}_$profileTimestamp"
 }
 
 $payload = [ordered]@{
