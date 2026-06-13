@@ -6,7 +6,7 @@ cd /d "%~dp0"
 echo [Batch] Initiating Undetectable profile launch...
 
 :: Call the PowerShell script and pass the profile name as an argument
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0open-undetectable.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\open-undetectable.ps1"
 
 if %ERRORLEVEL% NEQ 0 (
     echo [Batch] Failed to launch profile.
@@ -53,12 +53,20 @@ if "%SESSION_NAME%"=="" (
     goto GET_NAME
 )
 
+set "OUTPUT_PATH="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\resolve-recording-output-path.ps1" -SessionType "%SESSION_TYPE%" -SessionName "%SESSION_NAME%"`) do set "OUTPUT_PATH=%%I"
+
+if "%OUTPUT_PATH%"=="" (
+    echo [Error] Could not create a recording path from the selected profile resolution.
+    exit /b 1
+)
+
 echo.
-echo Target path: .\%SESSION_TYPE%\%SESSION_NAME%.json
+echo Target path: %OUTPUT_PATH%
 echo.
 
 :: Execute the CLI tool, then focus the selected browser profile once recording is beginning
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-record-with-focus.ps1" -OutputPath ".\%SESSION_TYPE%\%SESSION_NAME%.json" -Title "%SESSION_NAME%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-record-with-focus.ps1" -OutputPath "%OUTPUT_PATH%" -Title "%SESSION_NAME%"
 
 if %ERRORLEVEL% NEQ 0 (
     echo [Batch] Recording failed.

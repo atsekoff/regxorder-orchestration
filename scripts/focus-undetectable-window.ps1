@@ -7,8 +7,13 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib\profile-state.ps1")
+
 if ([string]::IsNullOrWhiteSpace($WindowTitle) -and (Test-Path -LiteralPath $ProfileStatePath)) {
-    $WindowTitle = (Get-Content -LiteralPath $ProfileStatePath -Raw).Trim()
+    $profileState = Get-OrchestrationProfileState -StatePath $ProfileStatePath
+    if ($profileState) {
+        $WindowTitle = $profileState.ProfileName
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($WindowTitle)) {

@@ -1,1 +1,1 @@
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0play.ps1"
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\play.ps1"

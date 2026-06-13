@@ -6,6 +6,28 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib\resolution.ps1")
+. (Join-Path $PSScriptRoot "lib\profile-state.ps1")
+
+function Read-ProfileResolution {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileName
+    )
+
+    $resolution = $null
+    while ([string]::IsNullOrWhiteSpace($resolution)) {
+        $resolutionInput = Read-Host "Enter resolution for '$ProfileName' (e.g. 1920x1080)"
+        $resolution = ConvertTo-ResolutionFolderName -Value $resolutionInput
+
+        if ([string]::IsNullOrWhiteSpace($resolution)) {
+            Write-Host "Use widthxheight format, for example 1920x1080." -ForegroundColor Yellow
+        }
+    }
+
+    return $resolution
+}
+
 function Test-ProfileAlreadyRunningError {
     param(
         [Parameter(Mandatory = $false)]
@@ -76,9 +98,11 @@ try {
     # Convert the dictionary keys/values into a structured array we can iterate over
     $profileList = @()
     foreach ($id in $profilesData.psobject.Properties.Name) {
+        $profileData = $profilesData.$id
         $profileList += [PSCustomObject]@{
-            Id   = $id
-            Name = $profilesData.$id.name
+            Id         = $id
+            Name       = $profileData.name
+            Resolution = Get-ResolutionFromProfile -Profile $profileData
         }
     }
 
@@ -90,7 +114,12 @@ try {
     # 2. Display the Interactive Menu
     Write-Host "`n=== CHOOSE A PROFILE ===" -ForegroundColor Cyan
     for ($i = 0; $i -lt $profileList.Count; $i++) {
-        Write-Host (" [{0}] {1}" -f ($i + 1), $profileList[$i].Name)
+        $profileLabel = $profileList[$i].Name
+        if (-not [string]::IsNullOrWhiteSpace($profileList[$i].Resolution)) {
+            $profileLabel = "$profileLabel [$($profileList[$i].Resolution)]"
+        }
+
+        Write-Host (" [{0}] {1}" -f ($i + 1), $profileLabel)
     }
     Write-Host "========================================`n"
 
@@ -112,6 +141,11 @@ try {
     $selectedProfile = $profileList[$choice - 1]
     $profileId = $selectedProfile.Id
     $profileName = $selectedProfile.Name
+    $profileResolution = $selectedProfile.Resolution
+
+    if ([string]::IsNullOrWhiteSpace($profileResolution)) {
+        $profileResolution = Read-ProfileResolution -ProfileName $profileName
+    }
 
     # 4. Start the Profile via GET request as specified in docs
     Write-Host "`nLaunching profile: '$profileName'..." -ForegroundColor Cyan
@@ -130,17 +164,17 @@ try {
     
     if ($isStarted -or $isAlreadyRunning) {
         try {
-            Set-Content -LiteralPath $ProfileStatePath -Value $profileName -Encoding UTF8 -ErrorAction Stop
+            Set-OrchestrationProfileState -StatePath $ProfileStatePath -ProfileId $profileId -ProfileName $profileName -Resolution $profileResolution
         }
         catch {
-            Write-Warning "Profile launched, but the selected profile title could not be saved for later focusing: $_"
+            Write-Warning "Profile launched, but the selected profile state could not be saved for later focusing/recording: $_"
         }
 
         if ($isStarted) {
-            Write-Host "Profile started successfully!" -ForegroundColor Green
+            Write-Host "Profile started successfully at $profileResolution." -ForegroundColor Green
         }
         else {
-            Write-Host "Profile is already running. Treating as success." -ForegroundColor Green
+            Write-Host "Profile is already running. Treating as success at $profileResolution." -ForegroundColor Green
         }
     }
     else {

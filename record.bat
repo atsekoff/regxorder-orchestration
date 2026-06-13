@@ -40,12 +40,31 @@ if "%SESSION_NAME%"=="" (
     goto GET_NAME
 )
 
+:GET_RESOLUTION
+set /p "SESSION_RESOLUTION=Enter recording resolution (e.g. 1920x1080): "
+
+:: Validate that the resolution isn't empty
+if "%SESSION_RESOLUTION%"=="" (
+    echo [Error] Resolution cannot be empty!
+    timeout /t 2 >nul
+    goto GET_RESOLUTION
+)
+
+set "OUTPUT_PATH="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\resolve-recording-output-path.ps1" -SessionType "%SESSION_TYPE%" -SessionName "%SESSION_NAME%" -Resolution "%SESSION_RESOLUTION%"`) do set "OUTPUT_PATH=%%I"
+
+if "%OUTPUT_PATH%"=="" (
+    echo [Error] Could not create a recording path. Use a resolution like 1920x1080.
+    timeout /t 2 >nul
+    goto GET_RESOLUTION
+)
+
 echo.
-echo Target path: .\%SESSION_TYPE%\%SESSION_NAME%.json
+echo Target path: %OUTPUT_PATH%
 echo.
 
 :: Execute the CLI tool with the dynamic folder type and session name
-.\regxorder-cli.exe record --output ".\%SESSION_TYPE%\%SESSION_NAME%.json" --title "%SESSION_NAME%" --start-hotkey ctrl+shift+f9 --stop-hotkey ctrl+shift+f10
+.\regxorder-cli.exe record --output "%OUTPUT_PATH%" --title "%SESSION_NAME%" --start-hotkey ctrl+shift+f9 --stop-hotkey ctrl+shift+f10
 
 :: Automatically close the terminal window when done
 exit

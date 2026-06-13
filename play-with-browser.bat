@@ -6,7 +6,7 @@ cd /d "%~dp0"
 echo [Batch] Initiating Undetectable profile launch...
 
 :: Call the PowerShell script and pass the profile name as an argument
-powershell -NoProfile -ExecutionPolicy Bypass -File "open-undetectable.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\open-undetectable.ps1"
 
 if %ERRORLEVEL% NEQ 0 (
     echo [Batch] Failed to launch profile.

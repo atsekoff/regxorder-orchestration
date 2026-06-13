@@ -3,6 +3,9 @@
 #>
 $ErrorActionPreference = "Stop"
 
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $repoRoot
+
 # Function to handle the folder scanning and user selection
 function Get-SessionSelection {
     param (
@@ -10,12 +13,22 @@ function Get-SessionSelection {
         [bool]$MultiSelect
     )
 
-    if (-not (Test-Path ".\$Folder")) {
-        New-Item -ItemType Directory -Path ".\$Folder" | Out-Null
+    $folderPath = ".\$Folder"
+
+    if (-not (Test-Path $folderPath)) {
+        New-Item -ItemType Directory -Path $folderPath | Out-Null
     }
 
-    # Fetch all .json files in the folder
-    $files = Get-ChildItem -Path ".\$Folder" -Filter *.json | Select-Object -ExpandProperty Name
+    $folderFullPath = (Resolve-Path -LiteralPath $folderPath).Path
+
+    # Fetch all .json files in the folder and any resolution subfolders.
+    $files = @(Get-ChildItem -Path $folderPath -Filter *.json -File -Recurse | Sort-Object FullName | ForEach-Object {
+        $relativeName = $_.FullName.Substring($folderFullPath.Length).TrimStart('\', '/')
+        [PSCustomObject]@{
+            DisplayName = $relativeName
+            Path        = ".\$Folder\$relativeName"
+        }
+    })
     
     if ($files.Count -eq 0) {
         Write-Host "  [No .json sessions found in $Folder]" -ForegroundColor Yellow
@@ -24,7 +37,7 @@ function Get-SessionSelection {
 
     # Print the available options with 1-based indices
     for ($i = 0; $i -lt $files.Count; $i++) {
-        Write-Host "  [$($i + 1)] $($files[$i])"
+        Write-Host "  [$($i + 1)] $($files[$i].DisplayName)"
     }
     Write-Host ""
 
@@ -42,7 +55,7 @@ function Get-SessionSelection {
                 if ($idx -match '^\d+$') {
                     $num = [int]$idx
                     if ($num -ge 1 -and $num -le $files.Count) {
-                        $selectedFiles += ".\$Folder\$($files[$num - 1])"
+                        $selectedFiles += $files[$num - 1].Path
                     }
                     else {
                         Write-Host "  Error: Index $num is out of range." -ForegroundColor Red
@@ -62,7 +75,7 @@ function Get-SessionSelection {
             if ($inputStr -match '^\d+$') {
                 $num = [int]$inputStr
                 if ($num -ge 1 -and $num -le $files.Count) {
-                    return @(".\$Folder\$($files[$num - 1])")
+                    return @($files[$num - 1].Path)
                 }
             }
             Write-Host "  Error: Invalid selection. Please choose a single valid index." -ForegroundColor Red
@@ -118,9 +131,9 @@ foreach ($sessionPath in $playbackQueue) {
     Write-Host "Now Playing: $sessionPath ..." -ForegroundColor Magenta
     
     # Start playback, then shift focus to the selected browser once playback is beginning.
-    $process = Start-Process -FilePath ".\regxorder-cli.exe" -ArgumentList "play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10" -NoNewWindow -PassThru
+    $process = Start-Process -FilePath (Join-Path $repoRoot "regxorder-cli.exe") -ArgumentList "play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10" -WorkingDirectory $repoRoot -NoNewWindow -PassThru
     Start-Sleep -Milliseconds 250
-    & "$PSScriptRoot\focus-undetectable-window.ps1" | Out-Null
+    & (Join-Path $PSScriptRoot "focus-undetectable-window.ps1") | Out-Null
     $process.WaitForExit()
 
     if ($process.ExitCode -ne 0) {
