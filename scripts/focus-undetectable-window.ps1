@@ -17,8 +17,7 @@ if ([string]::IsNullOrWhiteSpace($WindowTitle) -and (Test-Path -LiteralPath $Pro
 }
 
 if ([string]::IsNullOrWhiteSpace($WindowTitle)) {
-    Write-Warning "No Undetectable profile title is available to focus."
-    exit 0
+    throw "No Undetectable profile title is available to focus."
 }
 
 if (-not ("UndetectableWindowFocus" -as [type])) {
@@ -43,6 +42,9 @@ public static class UndetectableWindowFocus
 
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
 
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -82,12 +84,19 @@ for ($attempt = 0; $attempt -lt $MaxAttempts -and $windowHandle -eq [IntPtr]::Ze
 }
 
 if ($windowHandle -eq [IntPtr]::Zero) {
-    Write-Warning "Could not find a visible window matching '$WindowTitle'."
-    exit 0
+    throw "Could not find a visible window matching '$WindowTitle'."
 }
 
-[UndetectableWindowFocus]::ShowWindow($windowHandle, 9) | Out-Null
-Start-Sleep -Milliseconds 100
-[UndetectableWindowFocus]::SetForegroundWindow($windowHandle) | Out-Null
+$focusSucceeded = $false
+for ($attempt = 0; $attempt -lt $MaxAttempts -and -not $focusSucceeded; $attempt++) {
+    [UndetectableWindowFocus]::ShowWindow($windowHandle, 9) | Out-Null
+    [UndetectableWindowFocus]::SetForegroundWindow($windowHandle) | Out-Null
+    Start-Sleep -Milliseconds $DelayMilliseconds
+    $focusSucceeded = ([UndetectableWindowFocus]::GetForegroundWindow() -eq $windowHandle)
+}
+
+if (-not $focusSucceeded) {
+    throw "Failed to set foreground window for '$WindowTitle'."
+}
 
 Write-Host "Focused browser window '$WindowTitle'." -ForegroundColor Green

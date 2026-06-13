@@ -129,11 +129,18 @@ Read-Host "Press [ENTER] to start back-to-back playback..."
 # Loop and execute the CLI back-to-back
 foreach ($sessionPath in $playbackQueue) {
     Write-Host "Now Playing: $sessionPath ..." -ForegroundColor Magenta
-    
-    # Start playback, then shift focus to the selected browser once playback is beginning.
+
+    # Focus the selected browser before playback starts.
+    try {
+        & (Join-Path $PSScriptRoot "focus-undetectable-window.ps1") | Out-Null
+    }
+    catch {
+        Write-Host "Focus failed for playback session $sessionPath`: $_" -ForegroundColor Red
+        exit 1
+    }
+
     $process = Start-Process -FilePath (Join-Path $repoRoot "regxorder-cli.exe") -ArgumentList "play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10" -WorkingDirectory $repoRoot -NoNewWindow -PassThru
-    Start-Sleep -Milliseconds 250
-    & (Join-Path $PSScriptRoot "focus-undetectable-window.ps1") | Out-Null
+
     $process.WaitForExit()
 
     if ($process.ExitCode -ne 0) {
