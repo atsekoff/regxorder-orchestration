@@ -1,0 +1,1 @@
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\new-random-undetectable-profile.ps1" %*
