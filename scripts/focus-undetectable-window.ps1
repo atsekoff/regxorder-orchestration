@@ -87,9 +87,11 @@ if ($windowHandle -eq [IntPtr]::Zero) {
     throw "Could not find a visible window matching '$WindowTitle'."
 }
 
+# SW_SHOWMAXIMIZED = 3 brings the window to the foreground maximized/full screen.
+$showMaximized = 3
 $focusSucceeded = $false
 for ($attempt = 0; $attempt -lt $MaxAttempts -and -not $focusSucceeded; $attempt++) {
-    [UndetectableWindowFocus]::ShowWindow($windowHandle, 9) | Out-Null
+    [UndetectableWindowFocus]::ShowWindow($windowHandle, $showMaximized) | Out-Null
     [UndetectableWindowFocus]::SetForegroundWindow($windowHandle) | Out-Null
     Start-Sleep -Milliseconds $DelayMilliseconds
     $focusSucceeded = ([UndetectableWindowFocus]::GetForegroundWindow() -eq $windowHandle)
