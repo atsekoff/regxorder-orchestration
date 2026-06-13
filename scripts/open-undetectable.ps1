@@ -1,13 +1,16 @@
 # --- Configuration ---
 param (
     [string]$ApiUrl = "http://localhost:25432",
-    [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt")
+    [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
+    [string]$UndetectablePath,
+    [int]$StartupTimeoutSeconds = 60
 )
 
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\resolution.ps1")
 . (Join-Path $PSScriptRoot "lib\profile-state.ps1")
+. (Join-Path $PSScriptRoot "lib\undetectable-app.ps1")
 
 function Read-ProfileResolution {
     param(
@@ -81,6 +84,8 @@ if (Test-Path -LiteralPath $ProfileStatePath) {
 }
 
 try {
+    Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
+
     Write-Host "Connecting to Undetectable API at $ApiUrl..." -ForegroundColor Cyan
     
     # 1. Fetch the profile list using the official endpoint
