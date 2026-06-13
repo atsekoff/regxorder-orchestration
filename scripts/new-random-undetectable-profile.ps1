@@ -74,6 +74,88 @@ function Add-PayloadValue {
     $Payload[$Name] = $Value
 }
 
+# Map of proxy country names (and common aliases) to an Accept-Language pair.
+# Generic/region proxies (for example "Europe") are intentionally absent so they are skipped.
+$countryLanguageMap = [ordered]@{
+    "germany"        = "de-DE, en"
+    "uk"             = "en-GB, en"
+    "united kingdom" = "en-GB, en"
+    "great britain"  = "en-GB, en"
+    "england"        = "en-GB, en"
+    "france"         = "fr-FR, en"
+    "switzerland"    = "de-CH, en"
+    "spain"          = "es-ES, en"
+    "norway"         = "nb-NO, en"
+    "italy"          = "it-IT, en"
+    "finland"        = "fi-FI, en"
+    "sweden"         = "sv-SE, en"
+    "poland"         = "pl-PL, en"
+    "canada"         = "en-CA, en"
+    "nz"             = "en-NZ, en"
+    "new zealand"    = "en-NZ, en"
+    "australia"      = "en-AU, en"
+    "usa"            = "en-US, en"
+    "united states"  = "en-US, en"
+    "netherlands"    = "nl-NL, en"
+    "belgium"        = "nl-BE, en"
+    "austria"        = "de-AT, en"
+    "portugal"       = "pt-PT, en"
+    "ireland"        = "en-IE, en"
+    "denmark"        = "da-DK, en"
+    "czechia"        = "cs-CZ, en"
+    "czech republic" = "cs-CZ, en"
+    "greece"         = "el-GR, en"
+    "romania"        = "ro-RO, en"
+    "japan"          = "ja-JP, en"
+    "brazil"         = "pt-BR, en"
+    "mexico"         = "es-MX, en"
+}
+
+function Resolve-ProxyCountryLanguage {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Map,
+        [Parameter(Mandatory = $false)][string]$ProxyName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ProxyName)) {
+        return $null
+    }
+
+    $normalized = $ProxyName.Trim().ToLowerInvariant()
+
+    # Exact name match first (keeps short aliases like "uk"/"nz" from matching inside other words).
+    if ($Map.Contains($normalized)) {
+        return $Map[$normalized]
+    }
+
+    # Whole-word match for longer country names (for example "Germany Premium").
+    foreach ($alias in $Map.Keys) {
+        if ($alias.Length -lt 4) {
+            continue
+        }
+
+        if ($normalized -match ("\b" + [regex]::Escape($alias) + "\b")) {
+            return $Map[$alias]
+        }
+    }
+
+    return $null
+}
+
+function Add-EnglishLanguage {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Language
+    )
+
+    $tags = @($Language -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $hasEnglish = $tags | Where-Object { $_ -ieq "en" -or $_ -match "^en[-_]" }
+    if (-not $hasEnglish) {
+        $tags += "en"
+    }
+
+    return ($tags -join ", ")
+}
+
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
 
 $configsResponse = Invoke-RestMethod -Uri "$ApiUrl/configslist" -Method Get -TimeoutSec 20
@@ -133,7 +215,47 @@ elseif ($RandomResolution) {
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid
 # create-time resolutions, and for mobile/Mac configs the resolution is locked anyway).
 
-if ($null -eq $Languages -or $Languages.Count -eq 0) {
+# Auto-select a country-named proxy (unless one was passed) and align language to its country.
+$proxyCountryLanguage = $null
+if ([string]::IsNullOrWhiteSpace($Proxy)) {
+    $proxiesResponse = $null
+    try {
+        $proxiesResponse = Invoke-RestMethod -Uri "$ApiUrl/proxies/list" -Method Get -TimeoutSec 20
+    }
+    catch {
+        Write-Warning "Could not query proxies from $ApiUrl/proxies/list: $_"
+    }
+
+    if ($proxiesResponse -and $proxiesResponse.code -eq 0 -and $proxiesResponse.data) {
+        $countryProxies = @()
+        foreach ($proxyId in $proxiesResponse.data.PSObject.Properties.Name) {
+            $proxyEntry = $proxiesResponse.data.$proxyId
+            $proxyLanguage = Resolve-ProxyCountryLanguage -Map $countryLanguageMap -ProxyName $proxyEntry.name
+            if ($null -ne $proxyLanguage) {
+                $countryProxies += [PSCustomObject]@{
+                    Id       = $proxyId
+                    Name     = $proxyEntry.name
+                    Language = $proxyLanguage
+                }
+            }
+        }
+
+        if ($countryProxies.Count -gt 0) {
+            $selectedProxy = $countryProxies | Get-Random
+            $Proxy = $selectedProxy.Id
+            $proxyCountryLanguage = Add-EnglishLanguage -Language $selectedProxy.Language
+            Write-Host "Selected country proxy '$($selectedProxy.Name)' -> language '$proxyCountryLanguage'." -ForegroundColor Cyan
+        }
+        else {
+            Write-Warning "No country-named proxies found in the proxy manager; creating profile without an auto-selected proxy."
+        }
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($proxyCountryLanguage) -and ($null -eq $Languages -or $Languages.Count -eq 0)) {
+    $languageValue = $proxyCountryLanguage
+}
+elseif ($null -eq $Languages -or $Languages.Count -eq 0) {
     $languageValue = $languagePairs | Get-Random
 }
 else {
