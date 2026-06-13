@@ -2,7 +2,6 @@ param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$UndetectablePath,
     [int]$StartupTimeoutSeconds = 60,
-    [string]$NamePrefix = "Regxorder",
     [string]$Os,
     [string]$Browser,
     [ValidateSet("local", "cloud")]
@@ -15,9 +14,9 @@ param (
     [string]$Timezone,
     [string]$Geolocation,
     [string]$Proxy,
-    [string]$Folder,
+    [string]$Folder = "Random",
     [string]$Group,
-    [string[]]$Tags = @("regxorder", "random"),
+    [string[]]$Tags = @("random"),
     [string]$Notes,
     [switch]$DryRun
 )
@@ -187,7 +186,7 @@ if ($configs.Count -eq 0) {
 }
 
 $selectedConfig = $configs | Get-Random
-$profileName = "{0}_{1}_{2}" -f $NamePrefix, (Get-Date -Format "yyyyMMdd-HHmmss"), (([guid]::NewGuid().ToString("N")).Substring(0, 8))
+$profileName = Get-Date -Format "yyyyMMdd-HHmmss"
 
 if ($Cpu -le 0) {
     $Cpu = $allowedCpu | Get-Random
