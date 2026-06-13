@@ -5,7 +5,7 @@ param (
     [string]$Os,
     [string]$Browser,
     [ValidateSet("local", "cloud")]
-    [string]$Type = "cloud",
+    [string]$Type = "local",
     [int]$Cpu,
     [int]$Memory,
     [string]$Resolution,
