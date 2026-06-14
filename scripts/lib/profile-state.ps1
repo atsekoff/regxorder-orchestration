@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot "resolution.ps1")
+. (Join-Path $PSScriptRoot "device.ps1")
 
 function Get-OrchestrationProfileState {
     param(
@@ -27,10 +28,16 @@ function Get-OrchestrationProfileState {
             $resolution = ConvertTo-ResolutionFolderName -Value $profileName
         }
 
+        $device = ConvertTo-DeviceFolderName -Value $state.Device
+        if ([string]::IsNullOrWhiteSpace($device)) {
+            $device = ConvertTo-DeviceFolderName -Value $profileName
+        }
+
         return [PSCustomObject]@{
             ProfileId   = $state.ProfileId
             ProfileName = $profileName
             Resolution  = $resolution
+            Device      = $device
             RawText     = $stateText
         }
     }
@@ -39,6 +46,7 @@ function Get-OrchestrationProfileState {
             ProfileId   = $null
             ProfileName = $stateText
             Resolution  = ConvertTo-ResolutionFolderName -Value $stateText
+            Device      = ConvertTo-DeviceFolderName -Value $stateText
             RawText     = $stateText
         }
     }
@@ -58,6 +66,20 @@ function Get-OrchestrationProfileResolution {
     return $null
 }
 
+function Get-OrchestrationProfileDevice {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StatePath
+    )
+
+    $state = Get-OrchestrationProfileState -StatePath $StatePath
+    if ($state) {
+        return $state.Device
+    }
+
+    return $null
+}
+
 function Set-OrchestrationProfileState {
     param(
         [Parameter(Mandatory = $true)]
@@ -70,13 +92,17 @@ function Set-OrchestrationProfileState {
         [string]$ProfileName,
 
         [Parameter(Mandatory = $true)]
-        [string]$Resolution
+        [string]$Resolution,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Device
     )
 
     $profileState = [PSCustomObject]@{
         ProfileId   = $ProfileId
         ProfileName = $ProfileName
         Resolution  = ConvertTo-ResolutionFolderName -Value $Resolution
+        Device      = ConvertTo-DeviceFolderName -Value $Device
     }
 
     Set-Content -LiteralPath $StatePath -Value ($profileState | ConvertTo-Json -Compress) -Encoding UTF8 -ErrorAction Stop

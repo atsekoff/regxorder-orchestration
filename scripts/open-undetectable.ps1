@@ -9,6 +9,7 @@ param (
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\resolution.ps1")
+. (Join-Path $PSScriptRoot "lib\device.ps1")
 . (Join-Path $PSScriptRoot "lib\profile-state.ps1")
 . (Join-Path $PSScriptRoot "lib\undetectable-app.ps1")
 
@@ -108,6 +109,7 @@ try {
             Id         = $id
             Name       = $profileData.name
             Resolution = Get-ResolutionFromProfile -Profile $profileData
+            Device     = Get-DeviceFromProfile -Profile $profileData
         }
     }
 
@@ -147,9 +149,14 @@ try {
     $profileId = $selectedProfile.Id
     $profileName = $selectedProfile.Name
     $profileResolution = $selectedProfile.Resolution
+    $profileDevice = $selectedProfile.Device
 
     if ([string]::IsNullOrWhiteSpace($profileResolution)) {
         $profileResolution = Read-ProfileResolution -ProfileName $profileName
+    }
+
+    if ([string]::IsNullOrWhiteSpace($profileDevice)) {
+        $profileDevice = "desktop"
     }
 
     # 4. Start the Profile via GET request as specified in docs
@@ -169,17 +176,17 @@ try {
     
     if ($isStarted -or $isAlreadyRunning) {
         try {
-            Set-OrchestrationProfileState -StatePath $ProfileStatePath -ProfileId $profileId -ProfileName $profileName -Resolution $profileResolution
+            Set-OrchestrationProfileState -StatePath $ProfileStatePath -ProfileId $profileId -ProfileName $profileName -Resolution $profileResolution -Device $profileDevice
         }
         catch {
             Write-Warning "Profile launched, but the selected profile state could not be saved for later focusing/recording: $_"
         }
 
         if ($isStarted) {
-            Write-Host "Profile started successfully at $profileResolution." -ForegroundColor Green
+            Write-Host "Profile started successfully at $profileDevice/$profileResolution." -ForegroundColor Green
         }
         else {
-            Write-Host "Profile is already running. Treating as success at $profileResolution." -ForegroundColor Green
+            Write-Host "Profile is already running. Treating as success at $profileDevice/$profileResolution." -ForegroundColor Green
         }
     }
     else {
