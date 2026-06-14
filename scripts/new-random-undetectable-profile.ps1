@@ -347,9 +347,15 @@ if ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($Resolution)) {
         $Resolution = $MinResolution
     }
 }
+elseif ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($selectedConfig.Screen)) {
+    if (Test-ResolutionBelowMinimum -Value $selectedConfig.Screen -Minimum $MinResolution) {
+        Write-Host "Clamped config screen '$($selectedConfig.Screen)' to minimum '$MinResolution'." -ForegroundColor Cyan
+        $Resolution = $MinResolution
+    }
+}
 # Otherwise leave $Resolution empty: the selected Config's own default screen is used by
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid
-# create-time resolutions, and for mobile/Mac configs the resolution is locked anyway).
+# create-time resolutions).
 
 # Auto-select a country-named proxy (unless one was passed) and align language to its country.
 $proxyCountryLanguage = $null
