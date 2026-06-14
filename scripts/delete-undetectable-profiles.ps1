@@ -15,15 +15,37 @@ $ErrorActionPreference = "Stop"
 function ConvertTo-StringArray {
     param([object]$Value)
 
+    $items = [System.Collections.Generic.List[string]]::new()
+
+    function Add-StringValue {
+        param([object]$Item)
+
+        if ($null -eq $Item) {
+            return
+        }
+
+        if ($Item -is [array]) {
+            foreach ($nestedItem in $Item) {
+                Add-StringValue -Item $nestedItem
+            }
+
+            return
+        }
+
+        foreach ($part in $Item.ToString() -split ",") {
+            $text = $part.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                $items.Add($text)
+            }
+        }
+    }
+
     if ($null -eq $Value) {
         return @()
     }
 
-    if ($Value -is [array]) {
-        return @($Value | ForEach-Object { ConvertTo-StringArray -Value $_ })
-    }
-
-    return @($Value.ToString() -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    Add-StringValue -Item $Value
+    return @($items.ToArray())
 }
 
 function Test-AnyMatch {
@@ -56,8 +78,10 @@ function Test-TagMatch {
     }
 
     foreach ($wantedTag in $WantedTags) {
-        if ($ProfileTags | Where-Object { $_ -ieq $wantedTag }) {
-            return $true
+        foreach ($profileTag in $ProfileTags) {
+            if ($profileTag -ieq $wantedTag) {
+                return $true
+            }
         }
     }
 
@@ -91,21 +115,24 @@ if ($response.code -ne 0 -or -not $response.data) {
     throw "Failed to fetch profiles from $ApiUrl/list."
 }
 
-$profiles = @()
-foreach ($id in $response.data.PSObject.Properties.Name) {
-    $profileData = $response.data.$id
+$profiles = [System.Collections.Generic.List[object]]::new()
+foreach ($profileId in $response.data.PSObject.Properties.Name) {
+    $profileData = $response.data.$profileId
     $profileTags = ConvertTo-StringArray -Value $profileData.tags
 
-    $profiles += [PSCustomObject]@{
-        Id   = $id
-        Name = $profileData.name
-        Tags = $profileTags
-    }
+    $profiles.Add([PSCustomObject]@{
+            Id   = $profileId
+            Name = $profileData.name
+            Tags = $profileTags
+        })
 }
 
-$matches = @($profiles | Where-Object {
-        (Test-AnyMatch -Value $_.Id -Patterns $Id) -and (Test-AnyMatch -Value $_.Name -Patterns $Name) -and (Test-TagMatch -ProfileTags $_.Tags -WantedTags $Tag)
-    })
+$matches = [System.Collections.Generic.List[object]]::new()
+foreach ($profile in $profiles) {
+    if ((Test-AnyMatch -Value $profile.Id -Patterns $Id) -and (Test-AnyMatch -Value $profile.Name -Patterns $Name) -and (Test-TagMatch -ProfileTags $profile.Tags -WantedTags $Tag)) {
+        $matches.Add($profile)
+    }
+}
 
 if ($matches.Count -eq 0) {
     Write-Host "No matching profiles found." -ForegroundColor Yellow
