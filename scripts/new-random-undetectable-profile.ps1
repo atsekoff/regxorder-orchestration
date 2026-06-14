@@ -339,11 +339,12 @@ if (-not [string]::IsNullOrWhiteSpace($Resolution)) {
 }
 elseif ($RandomResolution) {
     $Resolution = $allowedResolutions | Get-Random
-    if ($hasMinResolution) {
-        if (Test-ResolutionBelowMinimum -Value $Resolution -Minimum $MinResolution) {
-            Write-Host "Clamped random resolution '$Resolution' to minimum '$MinResolution'." -ForegroundColor Cyan
-            $Resolution = $MinResolution
-        }
+}
+
+if ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($Resolution)) {
+    if (Test-ResolutionBelowMinimum -Value $Resolution -Minimum $MinResolution) {
+        Write-Host "Clamped resolution '$Resolution' to minimum '$MinResolution'." -ForegroundColor Cyan
+        $Resolution = $MinResolution
     }
 }
 # Otherwise leave $Resolution empty: the selected Config's own default screen is used by
