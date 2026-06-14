@@ -1,0 +1,1 @@
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-random-undetectable-playback-intervals.ps1" %*
