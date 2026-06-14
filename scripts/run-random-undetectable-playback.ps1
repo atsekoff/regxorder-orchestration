@@ -112,11 +112,12 @@ function Resolve-PlaybackSession {
         throw "No recording folder exists for device '$Device': $deviceFolder"
     }
 
-    $session = Get-ChildItem -LiteralPath $deviceFolder -Filter "*.json" -File -Recurse | Sort-Object FullName | Select-Object -First 1
-    if (-not $session) {
+    $sessions = @(Get-ChildItem -LiteralPath $deviceFolder -Filter "*.json" -File -Recurse)
+    if ($sessions.Count -eq 0) {
         throw "No '$Device' recordings found under '$deviceFolder'."
     }
 
+    $session = $sessions | Get-Random
     return $session.FullName
 }
 
