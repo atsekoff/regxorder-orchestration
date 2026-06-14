@@ -3,7 +3,7 @@ param (
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
     [int]$StartupTimeoutSeconds = 60,
-    [string]$SessionRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) "main-sessions"),
+    [string]$SessionRoot,
     [string]$SessionPath,
     [switch]$KeepProfileOnFailure,
 
@@ -17,6 +17,10 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "lib\resolution.ps1")
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($SessionRoot)) {
+    $SessionRoot = Join-Path $repoRoot "main-sessions"
+}
+
 $profileId = $null
 $profileName = $null
 $profileStarted = $false
@@ -52,6 +56,37 @@ function ConvertFrom-ScriptJsonOutput {
     }
 
     return $text.Substring($jsonStart) | ConvertFrom-Json -ErrorAction Stop
+}
+
+function ConvertTo-ParameterHashtable {
+    param([string[]]$Arguments)
+
+    $parameters = @{}
+    for ($index = 0; $index -lt $Arguments.Count; $index++) {
+        $argument = $Arguments[$index]
+        if ($argument -notmatch '^-{1,2}(.+)$') {
+            throw "Unexpected profile argument '$argument'. Expected -Name [value]."
+        }
+
+        $name = $Matches[1]
+        $values = @()
+        while ($index + 1 -lt $Arguments.Count -and $Arguments[$index + 1] -notmatch '^-') {
+            $index++
+            $values += $Arguments[$index]
+        }
+
+        if ($values.Count -eq 0) {
+            $parameters[$name] = $true
+        }
+        elseif ($values.Count -eq 1) {
+            $parameters[$name] = $values[0]
+        }
+        else {
+            $parameters[$name] = $values
+        }
+    }
+
+    return $parameters
 }
 
 function Get-ProfileById {
@@ -134,17 +169,19 @@ function Stop-ProfileIfNeeded {
 }
 
 try {
-    $createCommand = @(
-        "-ApiUrl", $ApiUrl,
-        "-StartupTimeoutSeconds", [string]$StartupTimeoutSeconds
-    )
+    $createCommand = @{
+        ApiUrl                = $ApiUrl
+        StartupTimeoutSeconds = $StartupTimeoutSeconds
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) {
-        $createCommand += @("-UndetectablePath", $UndetectablePath)
+        $createCommand.UndetectablePath = $UndetectablePath
     }
 
     if ($CreateProfileArgs) {
-        $createCommand += $CreateProfileArgs
+        foreach ($parameter in (ConvertTo-ParameterHashtable -Arguments $CreateProfileArgs).GetEnumerator()) {
+            $createCommand[$parameter.Key] = $parameter.Value
+        }
     }
 
     Write-Host "Creating random profile..." -ForegroundColor Cyan
@@ -161,15 +198,15 @@ try {
     $playbackSession = Resolve-PlaybackSession -Device $profileDevice -Root $SessionRoot -ExplicitPath $SessionPath
 
     Write-Host "Opening '$profileName' [$profileId] as $profileDevice." -ForegroundColor Cyan
-    $openCommand = @(
-        "-ApiUrl", $ApiUrl,
-        "-ProfileStatePath", $ProfileStatePath,
-        "-StartupTimeoutSeconds", [string]$StartupTimeoutSeconds,
-        "-ProfileId", $profileId
-    )
+    $openCommand = @{
+        ApiUrl                = $ApiUrl
+        ProfileStatePath      = $ProfileStatePath
+        StartupTimeoutSeconds = $StartupTimeoutSeconds
+        ProfileId             = $profileId
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) {
-        $openCommand += @("-UndetectablePath", $UndetectablePath)
+        $openCommand.UndetectablePath = $UndetectablePath
     }
 
     & (Join-Path $PSScriptRoot "open-undetectable.ps1") @openCommand
@@ -206,14 +243,14 @@ finally {
 
     if (-not [string]::IsNullOrWhiteSpace($profileId) -and (-not $KeepProfileOnFailure -or $exitCode -eq 0)) {
         try {
-            $deleteCommand = @(
-                "-ApiUrl", $ApiUrl,
-                "-StartupTimeoutSeconds", [string]$StartupTimeoutSeconds,
-                "-Id", $profileId
-            )
+            $deleteCommand = @{
+                ApiUrl                = $ApiUrl
+                StartupTimeoutSeconds = $StartupTimeoutSeconds
+                Id                    = $profileId
+            }
 
             if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) {
-                $deleteCommand += @("-UndetectablePath", $UndetectablePath)
+                $deleteCommand.UndetectablePath = $UndetectablePath
             }
 
             & (Join-Path $PSScriptRoot "delete-undetectable-profiles.ps1") @deleteCommand
