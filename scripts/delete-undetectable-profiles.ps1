@@ -2,6 +2,7 @@ param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$UndetectablePath,
     [int]$StartupTimeoutSeconds = 60,
+    [string[]]$Id,
     [string[]]$Name,
     [string[]]$Tag,
     [switch]$DryRun
@@ -75,11 +76,12 @@ function Invoke-ProfileDelete {
     return $response
 }
 
+$Id = ConvertTo-StringArray -Value $Id
 $Name = ConvertTo-StringArray -Value $Name
 $Tag = ConvertTo-StringArray -Value $Tag
 
-if ($Name.Count -eq 0 -and $Tag.Count -eq 0) {
-    throw "Pass at least one -Name or -Tag filter. Wildcards are supported for -Name, e.g. -Name 'DE_*'."
+if ($Id.Count -eq 0 -and $Name.Count -eq 0 -and $Tag.Count -eq 0) {
+    throw "Pass at least one -Id, -Name, or -Tag filter. Wildcards are supported for -Name, e.g. -Name 'DE_*'."
 }
 
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
@@ -102,7 +104,7 @@ foreach ($id in $response.data.PSObject.Properties.Name) {
 }
 
 $matches = @($profiles | Where-Object {
-        (Test-AnyMatch -Value $_.Name -Patterns $Name) -and (Test-TagMatch -ProfileTags $_.Tags -WantedTags $Tag)
+        (Test-AnyMatch -Value $_.Id -Patterns $Id) -and (Test-AnyMatch -Value $_.Name -Patterns $Name) -and (Test-TagMatch -ProfileTags $_.Tags -WantedTags $Tag)
     })
 
 if ($matches.Count -eq 0) {

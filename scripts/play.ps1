@@ -2,7 +2,8 @@
     Regxorder Batch Playback Script
 #>
 param (
-    [switch]$WithBrowser
+    [switch]$WithBrowser,
+    [string[]]$SessionPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,30 +95,35 @@ if ($WithBrowser) {
     }
 }
 
-# --- Main Script Execution ---
-Clear-Host
-Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host "               REGXORDER PLAYBACK UTILITY          " -ForegroundColor Cyan
-Write-Host "===================================================" -ForegroundColor Cyan
-Write-Host ""
+if ($SessionPath -and $SessionPath.Count -gt 0) {
+    $playbackQueue = @($SessionPath)
+}
+else {
+    # --- Main Script Execution ---
+    Clear-Host
+    Write-Host "===================================================" -ForegroundColor Cyan
+    Write-Host "               REGXORDER PLAYBACK UTILITY          " -ForegroundColor Cyan
+    Write-Host "===================================================" -ForegroundColor Cyan
+    Write-Host ""
 
-# 1. Gather Pre-Sessions (Multi-select)
-Write-Host ">>> Available PRE-SESSIONS:" -ForegroundColor Green
-$preToPlay = @(Get-SessionSelection -Folder "pre-sessions" -MultiSelect $true)
-Write-Host ""
+    # 1. Gather Pre-Sessions (Multi-select)
+    Write-Host ">>> Available PRE-SESSIONS:" -ForegroundColor Green
+    $preToPlay = @(Get-SessionSelection -Folder "pre-sessions" -MultiSelect $true)
+    Write-Host ""
 
-# 2. Gather Main Sessions (Single-select)
-Write-Host ">>> Available MAIN-SESSIONS:" -ForegroundColor Green
-$mainToPlay = @(Get-SessionSelection -Folder "main-sessions" -MultiSelect $false)
-Write-Host ""
+    # 2. Gather Main Sessions (Single-select)
+    Write-Host ">>> Available MAIN-SESSIONS:" -ForegroundColor Green
+    $mainToPlay = @(Get-SessionSelection -Folder "main-sessions" -MultiSelect $false)
+    Write-Host ""
 
-# 3. Gather Post-Sessions (Multi-select)
-Write-Host ">>> Available POST-SESSIONS:" -ForegroundColor Green
-$postToPlay = @(Get-SessionSelection -Folder "post-sessions" -MultiSelect $true)
-Write-Host ""
+    # 3. Gather Post-Sessions (Multi-select)
+    Write-Host ">>> Available POST-SESSIONS:" -ForegroundColor Green
+    $postToPlay = @(Get-SessionSelection -Folder "post-sessions" -MultiSelect $true)
+    Write-Host ""
 
-# Combine all targets into a single queue
-$playbackQueue = @($preToPlay) + @($mainToPlay) + @($postToPlay)
+    # Combine all targets into a single queue
+    $playbackQueue = @($preToPlay) + @($mainToPlay) + @($postToPlay)
+}
 
 if ($playbackQueue.Count -eq 0) {
     Write-Host "No sessions selected. Exiting." -ForegroundColor Yellow
@@ -135,7 +141,9 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host "Press 'ctrl+shift+f10' to stop individual sessions."
 Write-Host "Close this terminal window at any time to halt the entire sequence."
 Write-Host ""
-Read-Host "Press [ENTER] to start back-to-back playback..."
+if (-not ($SessionPath -and $SessionPath.Count -gt 0)) {
+    Read-Host "Press [ENTER] to start back-to-back playback..."
+}
 
 # Loop and execute the CLI back-to-back
 foreach ($sessionPath in $playbackQueue) {

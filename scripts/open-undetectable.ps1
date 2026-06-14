@@ -3,7 +3,8 @@ param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
-    [int]$StartupTimeoutSeconds = 60
+    [int]$StartupTimeoutSeconds = 60,
+    [string]$ProfileId
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,45 +119,57 @@ try {
         Exit 0
     }
 
-    # 2. Display the Interactive Menu
-    Write-Host "`n=== CHOOSE A PROFILE ===" -ForegroundColor Cyan
-    for ($i = 0; $i -lt $profileList.Count; $i++) {
-        $profileLabel = $profileList[$i].Name
-        if (-not [string]::IsNullOrWhiteSpace($profileList[$i].Resolution)) {
-            $profileLabel = "$profileLabel [$($profileList[$i].Resolution)]"
+    if ([string]::IsNullOrWhiteSpace($ProfileId)) {
+        # 2. Display the Interactive Menu
+        Write-Host "`n=== CHOOSE A PROFILE ===" -ForegroundColor Cyan
+        for ($i = 0; $i -lt $profileList.Count; $i++) {
+            $profileLabel = $profileList[$i].Name
+            if (-not [string]::IsNullOrWhiteSpace($profileList[$i].Resolution)) {
+                $profileLabel = "$profileLabel [$($profileList[$i].Resolution)]"
+            }
+
+            Write-Host (" [{0}] {1}" -f ($i + 1), $profileLabel)
         }
+        Write-Host "========================================`n"
 
-        Write-Host (" [{0}] {1}" -f ($i + 1), $profileLabel)
-    }
-    Write-Host "========================================`n"
-
-    # 3. Prompt User Choice
-    $choice = -1
-    while ($choice -lt 1 -or $choice -gt $profileList.Count) {
-        $profileInput = Read-Host "Select a profile number to launch (1-$($profileList.Count))"
-        if ([int]::TryParse($profileInput, [ref]$choice)) {
-            if ($choice -lt 1 -or $choice -gt $profileList.Count) {
-                Write-Host "Invalid selection. Please choose a number within the range." -ForegroundColor Yellow
+        # 3. Prompt User Choice
+        $choice = -1
+        while ($choice -lt 1 -or $choice -gt $profileList.Count) {
+            $profileInput = Read-Host "Select a profile number to launch (1-$($profileList.Count))"
+            if ([int]::TryParse($profileInput, [ref]$choice)) {
+                if ($choice -lt 1 -or $choice -gt $profileList.Count) {
+                    Write-Host "Invalid selection. Please choose a number within the range." -ForegroundColor Yellow
+                }
+            }
+            else {
+                Write-Host "Please enter a valid number." -ForegroundColor Yellow
             }
         }
-        else {
-            Write-Host "Please enter a valid number." -ForegroundColor Yellow
+
+        $selectedProfile = $profileList[$choice - 1]
+    }
+    else {
+        $selectedProfile = $profileList | Where-Object { $_.Id -eq $ProfileId } | Select-Object -First 1
+        if (-not $selectedProfile) {
+            throw "Profile id '$ProfileId' was not found."
         }
     }
 
-    # Get selected profile info
-    $selectedProfile = $profileList[$choice - 1]
     $profileId = $selectedProfile.Id
     $profileName = $selectedProfile.Name
     $profileResolution = $selectedProfile.Resolution
     $profileDevice = $selectedProfile.Device
 
-    if ([string]::IsNullOrWhiteSpace($profileResolution)) {
+    if ([string]::IsNullOrWhiteSpace($profileResolution) -and [string]::IsNullOrWhiteSpace($ProfileId)) {
         $profileResolution = Read-ProfileResolution -ProfileName $profileName
     }
 
     if ([string]::IsNullOrWhiteSpace($profileDevice)) {
         $profileDevice = "desktop"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($profileResolution)) {
+        $profileResolution = "unknown"
     }
 
     # 4. Start the Profile via GET request as specified in docs
