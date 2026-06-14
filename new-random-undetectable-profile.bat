@@ -1,1 +1,1 @@
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\new-random-undetectable-profile.ps1" %*
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\new-random-undetectable-profile.ps1" -MinResolution 1920x1080 %*

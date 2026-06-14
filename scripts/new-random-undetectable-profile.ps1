@@ -10,6 +10,7 @@ param (
     [int]$Memory,
     [string]$Resolution,
     [switch]$RandomResolution,
+    [string]$MinResolution,
     [string[]]$Languages,
     [string]$Timezone,
     [string]$Geolocation,
@@ -72,6 +73,30 @@ function Add-PayloadValue {
     }
 
     $Payload[$Name] = $Value
+}
+
+function ConvertTo-ResolutionSize {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    if ($Value -notmatch '^(?<Width>\d+)x(?<Height>\d+)$') {
+        throw "Invalid resolution '$Value'. Expected WIDTHxHEIGHT."
+    }
+
+    return [PSCustomObject]@{
+        Width  = [int]$Matches.Width
+        Height = [int]$Matches.Height
+    }
+}
+
+function Test-ResolutionBelowMinimum {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Minimum
+    )
+
+    $size = ConvertTo-ResolutionSize -Value $Value
+    $minimumSize = ConvertTo-ResolutionSize -Value $Minimum
+    return $size.Width -lt $minimumSize.Width -or $size.Height -lt $minimumSize.Height
 }
 
 # Map of proxy country names (and common aliases) to an Accept-Language pair.
@@ -282,6 +307,11 @@ elseif ($allowedMemory -notcontains $Memory) {
     throw "Invalid -Memory '$Memory'. Allowed values: $($allowedMemory -join ', ')."
 }
 
+$hasMinResolution = -not [string]::IsNullOrWhiteSpace($MinResolution)
+if ($hasMinResolution -and $allowedResolutions -notcontains $MinResolution) {
+    throw "Invalid -MinResolution '$MinResolution'. Allowed values: $($allowedResolutions -join ', ')."
+}
+
 if (-not [string]::IsNullOrWhiteSpace($Resolution)) {
     if ($allowedResolutions -notcontains $Resolution) {
         throw "Invalid -Resolution '$Resolution'. Allowed values: $($allowedResolutions -join ', ')."
@@ -289,6 +319,12 @@ if (-not [string]::IsNullOrWhiteSpace($Resolution)) {
 }
 elseif ($RandomResolution) {
     $Resolution = $allowedResolutions | Get-Random
+    if ($hasMinResolution) {
+        if (Test-ResolutionBelowMinimum -Value $Resolution -Minimum $MinResolution) {
+            Write-Host "Clamped random resolution '$Resolution' to minimum '$MinResolution'." -ForegroundColor Cyan
+            $Resolution = $MinResolution
+        }
+    }
 }
 # Otherwise leave $Resolution empty: the selected Config's own default screen is used by
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid

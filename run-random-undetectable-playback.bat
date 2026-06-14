@@ -1,1 +1,1 @@
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-random-undetectable-playback.ps1" %*
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\run-random-undetectable-playback.ps1" -MinResolution 1920x1080 %*
