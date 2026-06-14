@@ -1,6 +1,10 @@
 <#
     Regxorder Batch Playback Script
 #>
+param (
+    [switch]$WithBrowser
+)
+
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -23,12 +27,12 @@ function Get-SessionSelection {
 
     # Fetch all .json files in the folder and any resolution subfolders.
     $files = @(Get-ChildItem -Path $folderPath -Filter *.json -File -Recurse | Sort-Object FullName | ForEach-Object {
-        $relativeName = $_.FullName.Substring($folderFullPath.Length).TrimStart('\', '/')
-        [PSCustomObject]@{
-            DisplayName = $relativeName
-            Path        = ".\$Folder\$relativeName"
-        }
-    })
+            $relativeName = $_.FullName.Substring($folderFullPath.Length).TrimStart('\', '/')
+            [PSCustomObject]@{
+                DisplayName = $relativeName
+                Path        = ".\$Folder\$relativeName"
+            }
+        })
     
     if ($files.Count -eq 0) {
         Write-Host "  [No .json sessions found in $Folder]" -ForegroundColor Yellow
@@ -80,6 +84,13 @@ function Get-SessionSelection {
             }
             Write-Host "  Error: Invalid selection. Please choose a single valid index." -ForegroundColor Red
         }
+    }
+}
+
+if ($WithBrowser) {
+    & (Join-Path $PSScriptRoot "open-undetectable.ps1")
+    if (-not $?) {
+        exit 1
     }
 }
 
@@ -139,13 +150,12 @@ foreach ($sessionPath in $playbackQueue) {
         exit 1
     }
 
-    $process = Start-Process -FilePath (Join-Path $repoRoot "regxorder-cli.exe") -ArgumentList "play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10" -WorkingDirectory $repoRoot -NoNewWindow -PassThru
+    & (Join-Path $repoRoot "regxorder-cli.exe") @("play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10")
+    $exitCode = $LASTEXITCODE
 
-    $process.WaitForExit()
-
-    if ($process.ExitCode -ne 0) {
-        Write-Host "Playback failed for $sessionPath with exit code $($process.ExitCode)." -ForegroundColor Red
-        exit $process.ExitCode
+    if ($exitCode -ne 0) {
+        Write-Host "Playback failed for $sessionPath with exit code $exitCode." -ForegroundColor Red
+        exit $exitCode
     }
 }
 

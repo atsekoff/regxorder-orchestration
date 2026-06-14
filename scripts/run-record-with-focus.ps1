@@ -17,11 +17,6 @@ catch {
     exit 1
 }
 
-$process = Start-Process -FilePath (Join-Path $repoRoot "regxorder-cli.exe") `
-    -ArgumentList @("record", "--output", $OutputPath, "--title", $Title, "--start-hotkey", "ctrl+shift+f9", "--stop-hotkey", "ctrl+shift+f10") `
-    -WorkingDirectory $repoRoot `
-    -NoNewWindow `
-    -PassThru
-
-$process.WaitForExit()
-exit $process.ExitCode
+Set-Location -LiteralPath $repoRoot
+& (Join-Path $repoRoot "regxorder-cli.exe") @("record", "--output", $OutputPath, "--title", $Title, "--start-hotkey", "ctrl+shift+f9", "--stop-hotkey", "ctrl+shift+f10")
+exit $LASTEXITCODE
