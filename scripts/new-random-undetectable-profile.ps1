@@ -409,4 +409,6 @@ $profileId = $createResponse.data.profile_id
 if (-not [string]::IsNullOrWhiteSpace($profileId)) {
     Write-Host "Profile ID: $profileId" -ForegroundColor Green
 }
+$createResponse | Add-Member -NotePropertyName profile_name -NotePropertyValue $profileName -Force
+$createResponse | Add-Member -NotePropertyName selected_os -NotePropertyValue $selectedConfig.Os -Force
 $createResponse | ConvertTo-Json -Depth 10

@@ -14,7 +14,6 @@ param (
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\device.ps1")
-. (Join-Path $PSScriptRoot "lib\resolution.ps1")
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($SessionRoot)) {
@@ -87,27 +86,6 @@ function ConvertTo-ParameterHashtable {
     }
 
     return $parameters
-}
-
-function Get-ProfileById {
-    param([Parameter(Mandatory = $true)][string]$Id)
-
-    $response = Invoke-RestMethod -Uri "$ApiUrl/list" -Method Get -TimeoutSec 20
-    if ($response.code -ne 0 -or -not $response.data) {
-        throw "Failed to fetch profiles from $ApiUrl/list."
-    }
-
-    $profileData = $response.data.$Id
-    if (-not $profileData) {
-        throw "Created profile '$Id' was not found in $ApiUrl/list."
-    }
-
-    return [PSCustomObject]@{
-        Id         = $Id
-        Name       = $profileData.name
-        Resolution = Get-ResolutionFromProfile -Profile $profileData
-        Device     = Get-DeviceFromProfile -Profile $profileData
-    }
 }
 
 function Resolve-PlaybackSession {
@@ -192,9 +170,11 @@ try {
 
     $createResponse = ConvertFrom-ScriptJsonOutput -Output $createOutput
     $profileId = Get-CreatedProfileId -CreateResponse $createResponse
-    $profile = Get-ProfileById -Id $profileId
-    $profileName = $profile.Name
-    $profileDevice = ConvertTo-DeviceFolderName -Value $profile.Device
+    $profileName = $createResponse.profile_name
+    if ([string]::IsNullOrWhiteSpace($profileName)) {
+        $profileName = $profileId
+    }
+    $profileDevice = ConvertTo-DeviceFolderName -Value $createResponse.selected_os
     $playbackSession = Resolve-PlaybackSession -Device $profileDevice -Root $SessionRoot -ExplicitPath $SessionPath
 
     Write-Host "Opening '$profileName' [$profileId] as $profileDevice." -ForegroundColor Cyan
