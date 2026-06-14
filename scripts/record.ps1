@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
 
+. (Join-Path $PSScriptRoot "lib\profile-state.ps1")
+
 function Read-SessionType {
     while ($true) {
         Write-Host ""
@@ -89,7 +91,18 @@ $resolveArgs = @{
     SessionName = $sessionName
 }
 
-if (-not $WithBrowser) {
+if ($WithBrowser) {
+    $sessionResolution = Get-OrchestrationProfileResolution -StatePath (Join-Path $env:TEMP "orchestration-undetectable-profile.txt")
+    if (-not [string]::IsNullOrWhiteSpace($sessionResolution)) {
+        Write-Host "Detected recording resolution: $sessionResolution" -ForegroundColor Green
+        $resolveArgs.Resolution = $sessionResolution
+    }
+    else {
+        $sessionResolution = Read-RequiredValue -Prompt "Enter recording resolution (e.g. 1920x1080)" -ErrorMessage "Resolution cannot be empty!"
+        $resolveArgs.Resolution = $sessionResolution
+    }
+}
+else {
     $resolveArgs.Device = Read-Device
     $sessionResolution = Read-RequiredValue -Prompt "Enter recording resolution (e.g. 1920x1080)" -ErrorMessage "Resolution cannot be empty!"
     $resolveArgs.Resolution = $sessionResolution

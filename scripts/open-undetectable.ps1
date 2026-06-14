@@ -106,6 +106,15 @@ try {
     $profileList = @()
     foreach ($id in $profilesData.psobject.Properties.Name) {
         $profileData = $profilesData.$id
+        try {
+            $profileInfoResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/getinfo/$id" -Method Get
+            if ($profileInfoResponse.code -eq 0 -and $profileInfoResponse.data) {
+                $profileData = $profileInfoResponse.data
+            }
+        }
+        catch {
+        }
+
         $profileList += [PSCustomObject]@{
             Id         = $id
             Name       = $profileData.name
