@@ -260,11 +260,31 @@ function Get-RandomCountryCookies {
     }
 }
 
+function Get-UndetectableConfigsResponse {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApiUrl,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastResponse = $null
+    do {
+        $lastResponse = Invoke-RestMethod -Uri "$ApiUrl/configslist" -Method Get -TimeoutSec 20
+        if ($lastResponse.code -eq 0 -and $lastResponse.data -and $lastResponse.data.PSObject.Properties.Count -gt 0) {
+            return $lastResponse
+        }
+
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+
+    return $lastResponse
+}
+
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
 
-$configsResponse = Invoke-RestMethod -Uri "$ApiUrl/configslist" -Method Get -TimeoutSec 20
-if ($configsResponse.code -ne 0 -or -not $configsResponse.data) {
-    throw "Failed to fetch Undetectable configurations from $ApiUrl/configslist."
+$configsResponse = Get-UndetectableConfigsResponse -ApiUrl $ApiUrl -TimeoutSeconds $StartupTimeoutSeconds
+if ($configsResponse.code -ne 0 -or -not $configsResponse.data -or $configsResponse.data.PSObject.Properties.Count -eq 0) {
+    throw "Failed to fetch Undetectable configurations from $ApiUrl/configslist after waiting up to $StartupTimeoutSeconds seconds."
 }
 
 $configs = @()
