@@ -29,6 +29,17 @@ function Read-IntervalSeconds {
     }
 }
 
+function Read-YesNo {
+    param([Parameter(Mandatory = $true)][string]$Prompt)
+
+    while ($true) {
+        $answer = (Read-Host $Prompt).Trim()
+        if ($answer -match '^(y|yes)$') { return $true }
+        if ($answer -match '^(n|no)$') { return $false }
+        Write-Host "  Please answer Y or N." -ForegroundColor Red
+    }
+}
+
 $TaskName = "Regxorder Random Undetectable Playback Intervals"
 $intervalScriptPath = Join-Path $PSScriptRoot "run-random-undetectable-playback-intervals.ps1"
 
@@ -43,6 +54,8 @@ if ($minimumSeconds -gt $maximumSeconds) {
     throw "Minimum interval cannot be greater than maximum interval."
 }
 
+$runNow = Read-YesNo -Prompt "Start with a playback run immediately at logon? Y/N"
+
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $powershellPath = Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue |
 Select-Object -First 1 -ExpandProperty Source
@@ -56,7 +69,8 @@ $argumentList = @(
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$intervalScriptPath`"",
     "-MinimumInterval", $minimumSeconds.ToString(),
-    "-MaximumInterval", $maximumSeconds.ToString()
+    "-MaximumInterval", $maximumSeconds.ToString(),
+    "-RunNow:`$$($runNow.ToString().ToLowerInvariant())"
 )
 
 $action = New-ScheduledTaskAction -Execute $powershellPath -Argument ($argumentList -join ' ')
