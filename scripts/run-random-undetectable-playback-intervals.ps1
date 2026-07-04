@@ -1,4 +1,8 @@
 param (
+    [string]$MinimumInterval,
+    [string]$MaximumInterval,
+    [switch]$RunNow,
+
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$PlaybackArgs
 )
@@ -81,14 +85,30 @@ function Invoke-Playback {
     }
 }
 
-$minimumSeconds = Read-IntervalSeconds -Prompt "Minimum time between runs (minutes, or hh:mm:ss)"
-$maximumSeconds = Read-IntervalSeconds -Prompt "Maximum time between runs (minutes, or hh:mm:ss)"
+$minimumSeconds = if ($PSBoundParameters.ContainsKey('MinimumInterval')) {
+    ConvertTo-IntervalSeconds -Value $MinimumInterval
+}
+else {
+    Read-IntervalSeconds -Prompt "Minimum time between runs (minutes, or hh:mm:ss)"
+}
+
+$maximumSeconds = if ($PSBoundParameters.ContainsKey('MaximumInterval')) {
+    ConvertTo-IntervalSeconds -Value $MaximumInterval
+}
+else {
+    Read-IntervalSeconds -Prompt "Maximum time between runs (minutes, or hh:mm:ss)"
+}
 
 if ($minimumSeconds -gt $maximumSeconds) {
     throw "Minimum interval cannot be greater than maximum interval."
 }
 
-$runNow = Read-YesNo -Prompt "Start with a playback run now? Y/N"
+$runNow = if ($PSBoundParameters.ContainsKey('RunNow')) {
+    $RunNow.IsPresent
+}
+else {
+    Read-YesNo -Prompt "Start with a playback run now? Y/N"
+}
 
 Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
 
