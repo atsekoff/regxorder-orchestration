@@ -16,12 +16,14 @@ function ConvertTo-IntervalSeconds {
     throw "Enter minutes as a number, or a time like 00:30:00."
 }
 
-function Read-IntervalSeconds {
+function Read-ValidatedInterval {
     param([Parameter(Mandatory = $true)][string]$Prompt)
 
     while ($true) {
         try {
-            return ConvertTo-IntervalSeconds -Value (Read-Host $Prompt)
+            $raw = (Read-Host $Prompt).Trim()
+            ConvertTo-IntervalSeconds -Value $raw | Out-Null
+            return $raw
         }
         catch {
             Write-Host "  $_" -ForegroundColor Red
@@ -47,10 +49,10 @@ if (-not (Test-Path -LiteralPath $intervalScriptPath)) {
     throw "Intervals script not found at '$intervalScriptPath'."
 }
 
-$minimumSeconds = Read-IntervalSeconds -Prompt "Minimum time between runs (minutes, or hh:mm:ss)"
-$maximumSeconds = Read-IntervalSeconds -Prompt "Maximum time between runs (minutes, or hh:mm:ss)"
+$minimumInterval = Read-ValidatedInterval -Prompt "Minimum time between runs (minutes, or hh:mm:ss)"
+$maximumInterval = Read-ValidatedInterval -Prompt "Maximum time between runs (minutes, or hh:mm:ss)"
 
-if ($minimumSeconds -gt $maximumSeconds) {
+if ((ConvertTo-IntervalSeconds -Value $minimumInterval) -gt (ConvertTo-IntervalSeconds -Value $maximumInterval)) {
     throw "Minimum interval cannot be greater than maximum interval."
 }
 
@@ -68,8 +70,8 @@ $argumentList = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$intervalScriptPath`"",
-    "-MinimumInterval", $minimumSeconds.ToString(),
-    "-MaximumInterval", $maximumSeconds.ToString(),
+    "-MinimumInterval", $minimumInterval,
+    "-MaximumInterval", $maximumInterval,
     "-RunNow:`$$($runNow.ToString().ToLowerInvariant())"
 )
 
