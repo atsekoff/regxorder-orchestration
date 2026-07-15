@@ -357,9 +357,12 @@ elseif ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($selectedConfig
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid
 # create-time resolutions).
 
-# Auto-select a country-named proxy (unless one was passed) and align language to its country.
+# Auto-select a proxy (unless one was passed). Prefer country-named proxies so language can
+# align to the proxy country; otherwise fall back to any available proxy and name the profile
+# after that proxy.
 $proxyCountryLanguage = $null
 $selectedProxyName = $null
+$profileNamePrefix = $null
 if ([string]::IsNullOrWhiteSpace($Proxy)) {
     $proxiesResponse = $null
     try {
@@ -370,10 +373,18 @@ if ([string]::IsNullOrWhiteSpace($Proxy)) {
     }
 
     if ($proxiesResponse -and $proxiesResponse.code -eq 0 -and $proxiesResponse.data) {
+        $availableProxies = @()
         $countryProxies = @()
         foreach ($proxyId in $proxiesResponse.data.PSObject.Properties.Name) {
             $proxyEntry = $proxiesResponse.data.$proxyId
-            $proxyLanguage = Resolve-ProxyCountryLanguage -Map $countryLanguageMap -ProxyName $proxyEntry.name
+            $availableProxy = [PSCustomObject]@{
+                Id       = $proxyId
+                Name     = $proxyEntry.name
+                Language = Resolve-ProxyCountryLanguage -Map $countryLanguageMap -ProxyName $proxyEntry.name
+            }
+            $availableProxies += $availableProxy
+
+            $proxyLanguage = $availableProxy.Language
             if ($null -ne $proxyLanguage) {
                 $countryProxies += [PSCustomObject]@{
                     Id       = $proxyId
@@ -390,8 +401,15 @@ if ([string]::IsNullOrWhiteSpace($Proxy)) {
             $proxyCountryLanguage = Add-EnglishLanguage -Language $selectedProxy.Language
             Write-Host "Selected country proxy '$($selectedProxy.Name)' -> language '$proxyCountryLanguage'." -ForegroundColor Cyan
         }
+        elseif ($availableProxies.Count -gt 0) {
+            $selectedProxy = $availableProxies | Get-Random
+            $Proxy = $selectedProxy.Id
+            $selectedProxyName = $selectedProxy.Name
+            $profileNamePrefix = $selectedProxyName
+            Write-Warning "No country-named proxies found in the proxy manager; selected available proxy '$selectedProxyName' without language auto-alignment."
+        }
         else {
-            Write-Warning "No country-named proxies found in the proxy manager; creating profile without an auto-selected proxy."
+            Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
         }
     }
 }
@@ -410,7 +428,10 @@ else {
 # subtag of the selected language (which is aligned to the proxy country); fall back to just
 # the timestamp when no region is available.
 $locationCode = Get-LocationCode -Language $languageValue
-if ([string]::IsNullOrWhiteSpace($locationCode)) {
+if (-not [string]::IsNullOrWhiteSpace($profileNamePrefix)) {
+    $profileName = "${profileNamePrefix}_$profileTimestamp"
+}
+elseif ([string]::IsNullOrWhiteSpace($locationCode)) {
     $profileName = $profileTimestamp
 }
 else {
