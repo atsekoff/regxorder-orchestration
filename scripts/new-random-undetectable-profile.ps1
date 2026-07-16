@@ -39,15 +39,18 @@ $allowedResolutions = @(
     "1920x1080", "1920x1200", "2048x1152", "2560x1080", "2560x1440", "3440x1440",
     "3840x2160", "5120x1440"
 )
-$languagePairs = @(
-    "en-US, en",
-    "en-GB, en",
-    "en-CA, en",
-    "en-AU, en",
-    "es-ES, en-US",
-    "fr-FR, en-US",
-    "de-DE, en-US"
-)
+$countryCodeLanguageMap = @{
+    AD = "ca-AD"; AL = "sq-AL"; AT = "de-AT"; BA = "bs-BA"; BE = "nl-BE"
+    BG = "bg-BG"; BY = "be-BY"; CH = "de-CH"; CY = "el-CY"; CZ = "cs-CZ"
+    DE = "de-DE"; DK = "da-DK"; EE = "et-EE"; ES = "es-ES"; FI = "fi-FI"
+    FR = "fr-FR"; GB = "en-GB"; GR = "el-GR"; HR = "hr-HR"; HU = "hu-HU"
+    IE = "en-IE"; IS = "is-IS"; IT = "it-IT"; LI = "de-LI"; LT = "lt-LT"
+    LU = "lb-LU"; LV = "lv-LV"; MC = "fr-MC"; MD = "ro-MD"; ME = "sr-Latn-ME"
+    MK = "mk-MK"; MT = "mt-MT"; NL = "nl-NL"; NO = "nb-NO"; PL = "pl-PL"
+    PT = "pt-PT"; RO = "ro-RO"; RS = "sr-Latn-RS"; SE = "sv-SE"; SI = "sl-SI"
+    SK = "sk-SK"; SM = "it-SM"; TR = "tr-TR"; UA = "uk-UA"; VA = "it-VA"
+    XK = "sq-XK"
+}
 
 function Add-PayloadValue {
     param(
@@ -100,74 +103,6 @@ function Test-ResolutionBelowMinimum {
     return $size.Width -lt $minimumSize.Width -or $size.Height -lt $minimumSize.Height
 }
 
-# Map of proxy country names (and common aliases) to an Accept-Language pair.
-# Generic/region proxies (for example "Europe") are intentionally absent so they are skipped.
-$countryLanguageMap = [ordered]@{
-    "germany"        = "de-DE, en"
-    "uk"             = "en-GB, en"
-    "united kingdom" = "en-GB, en"
-    "great britain"  = "en-GB, en"
-    "england"        = "en-GB, en"
-    "france"         = "fr-FR, en"
-    "switzerland"    = "de-CH, en"
-    "spain"          = "es-ES, en"
-    "norway"         = "nb-NO, en"
-    "italy"          = "it-IT, en"
-    "finland"        = "fi-FI, en"
-    "sweden"         = "sv-SE, en"
-    "poland"         = "pl-PL, en"
-    "canada"         = "en-CA, en"
-    "nz"             = "en-NZ, en"
-    "new zealand"    = "en-NZ, en"
-    "australia"      = "en-AU, en"
-    "usa"            = "en-US, en"
-    "united states"  = "en-US, en"
-    "netherlands"    = "nl-NL, en"
-    "belgium"        = "nl-BE, en"
-    "austria"        = "de-AT, en"
-    "portugal"       = "pt-PT, en"
-    "ireland"        = "en-IE, en"
-    "denmark"        = "da-DK, en"
-    "czechia"        = "cs-CZ, en"
-    "czech republic" = "cs-CZ, en"
-    "greece"         = "el-GR, en"
-    "romania"        = "ro-RO, en"
-    "japan"          = "ja-JP, en"
-    "brazil"         = "pt-BR, en"
-    "mexico"         = "es-MX, en"
-}
-
-function Resolve-ProxyCountryLanguage {
-    param(
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Map,
-        [Parameter(Mandatory = $false)][string]$ProxyName
-    )
-
-    if ([string]::IsNullOrWhiteSpace($ProxyName)) {
-        return $null
-    }
-
-    $normalized = $ProxyName.Trim().ToLowerInvariant()
-
-    # Exact name match first (keeps short aliases like "uk"/"nz" from matching inside other words).
-    if ($Map.Contains($normalized)) {
-        return $Map[$normalized]
-    }
-
-    # Whole-word match for longer country names (for example "Germany Premium").
-    foreach ($alias in $Map.Keys) {
-        if ($alias.Length -lt 4) {
-            continue
-        }
-
-        if ($normalized -match ("\b" + [regex]::Escape($alias) + "\b")) {
-            return $Map[$alias]
-        }
-    }
-
-    return $null
-}
-
 function Add-EnglishLanguage {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Language
@@ -182,31 +117,27 @@ function Add-EnglishLanguage {
     return ($tags -join ", ")
 }
 
-function Get-LocationCode {
-    param(
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Language
-    )
+function Get-ProxyCountry {
+    param([Parameter(Mandatory = $true)][string]$IpAddress)
 
-    if ([string]::IsNullOrWhiteSpace($Language)) {
-        return $null
+    $response = Invoke-RestMethod -Uri "https://ipwho.is/$IpAddress" -Method Get -TimeoutSec 20
+    if (-not $response.success -or [string]::IsNullOrWhiteSpace($response.country_code)) {
+        throw "Country lookup failed for proxy IP '$IpAddress'."
     }
 
-    # Use the region subtag of the first language tag (e.g. "de-DE, en" -> "DE").
-    $firstTag = (@($Language -split ",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })[0]
-    if ($firstTag -match "[-_](?<region>[A-Za-z]{2})$") {
-        return $Matches.region.ToUpperInvariant()
+    return [PSCustomObject]@{
+        Code = $response.country_code.ToUpperInvariant()
+        Name = $response.country
     }
-
-    return $null
 }
 
 function Get-RandomCountryCookies {
     param(
         [Parameter(Mandatory = $true)][string]$CookiesRoot,
-        [Parameter(Mandatory = $false)][string]$ProxyName
+        [Parameter(Mandatory = $false)][string]$CountryName
     )
 
-    if ([string]::IsNullOrWhiteSpace($ProxyName)) {
+    if ([string]::IsNullOrWhiteSpace($CountryName)) {
         return $null
     }
 
@@ -214,8 +145,7 @@ function Get-RandomCountryCookies {
         return $null
     }
 
-    # Match a cookies subfolder (e.g. "germany") against the proxy name (e.g. "Germany Premium").
-    $normalized = $ProxyName.Trim().ToLowerInvariant()
+    $normalized = $CountryName.Trim().ToLowerInvariant()
     $countryDir = $null
     foreach ($dir in Get-ChildItem -LiteralPath $CookiesRoot -Directory -ErrorAction SilentlyContinue) {
         $folderName = $dir.Name.Trim().ToLowerInvariant()
@@ -358,12 +288,8 @@ elseif ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($selectedConfig
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid
 # create-time resolutions).
 
-# Auto-select a proxy (unless one was passed). Prefer country-named proxies so language can
-# align to the proxy country; otherwise fall back to any available proxy and name the profile
-# after that proxy.
-$proxyCountryLanguage = $null
-$selectedProxyName = $null
-$profileNamePrefix = $null
+# Auto-select any saved proxy unless one was passed. Its actual country is resolved from the
+# checked connection after profile creation.
 if ([string]::IsNullOrWhiteSpace($Proxy)) {
     $proxiesResponse = $null
     try {
@@ -375,39 +301,18 @@ if ([string]::IsNullOrWhiteSpace($Proxy)) {
 
     if ($proxiesResponse -and $proxiesResponse.code -eq 0 -and $proxiesResponse.data) {
         $availableProxies = @()
-        $countryProxies = @()
         foreach ($proxyId in $proxiesResponse.data.PSObject.Properties.Name) {
             $proxyEntry = $proxiesResponse.data.$proxyId
-            $availableProxy = [PSCustomObject]@{
-                Id       = $proxyId
-                Name     = $proxyEntry.name
-                Language = Resolve-ProxyCountryLanguage -Map $countryLanguageMap -ProxyName $proxyEntry.name
-            }
-            $availableProxies += $availableProxy
-
-            $proxyLanguage = $availableProxy.Language
-            if ($null -ne $proxyLanguage) {
-                $countryProxies += [PSCustomObject]@{
-                    Id       = $proxyId
-                    Name     = $proxyEntry.name
-                    Language = $proxyLanguage
-                }
+            $availableProxies += [PSCustomObject]@{
+                Id   = $proxyId
+                Name = $proxyEntry.name
             }
         }
 
-        if ($countryProxies.Count -gt 0) {
-            $selectedProxy = $countryProxies | Get-Random
-            $Proxy = $selectedProxy.Id
-            $selectedProxyName = $selectedProxy.Name
-            $proxyCountryLanguage = Add-EnglishLanguage -Language $selectedProxy.Language
-            Write-Host "Selected country proxy '$($selectedProxy.Name)' -> language '$proxyCountryLanguage'." -ForegroundColor Cyan
-        }
-        elseif ($availableProxies.Count -gt 0) {
+        if ($availableProxies.Count -gt 0) {
             $selectedProxy = $availableProxies | Get-Random
             $Proxy = $selectedProxy.Id
-            $selectedProxyName = $selectedProxy.Name
-            $profileNamePrefix = $selectedProxyName
-            Write-Warning "No country-named proxies found in the proxy manager; selected available proxy '$selectedProxyName' without language auto-alignment."
+            Write-Host "Selected proxy '$($selectedProxy.Name)'; country and language will be resolved after its connection check." -ForegroundColor Cyan
         }
         else {
             Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
@@ -415,29 +320,13 @@ if ([string]::IsNullOrWhiteSpace($Proxy)) {
     }
 }
 
-if (-not [string]::IsNullOrWhiteSpace($proxyCountryLanguage) -and ($null -eq $Languages -or $Languages.Count -eq 0)) {
-    $languageValue = $proxyCountryLanguage
-}
-elseif ($null -eq $Languages -or $Languages.Count -eq 0) {
-    $languageValue = $languagePairs | Get-Random
+$languageValue = if ($null -ne $Languages -and $Languages.Count -gt 0) {
+    $Languages -join ", "
 }
 else {
-    $languageValue = $Languages -join ", "
+    "en-US, en"
 }
-
-# Profile name format: <LOCATION>_<DATETIME>, e.g. DE_20260613_1654. Location is the region
-# subtag of the selected language (which is aligned to the proxy country); fall back to just
-# the timestamp when no region is available.
-$locationCode = Get-LocationCode -Language $languageValue
-if (-not [string]::IsNullOrWhiteSpace($profileNamePrefix)) {
-    $profileName = "${profileNamePrefix}_$profileTimestamp"
-}
-elseif ([string]::IsNullOrWhiteSpace($locationCode)) {
-    $profileName = $profileTimestamp
-}
-else {
-    $profileName = "${locationCode}_$profileTimestamp"
-}
+$profileName = $profileTimestamp
 
 $payload = [ordered]@{
     name     = $profileName
@@ -457,17 +346,9 @@ Add-PayloadValue -Payload $payload -Name "group" -Value $Group
 Add-PayloadValue -Payload $payload -Name "tags" -Value $Tags
 Add-PayloadValue -Payload $payload -Name "notes" -Value $Notes
 
-# Preload cookies for the selected proxy's country, if a matching /cookies/<country>/ folder exists.
-# The Create Profile API accepts "cookies" as a JSON array of cookie objects (the same format
-# Undetectable exports), so we parse the chosen file and pass its array straight through.
+# Cookies are selected after the checked proxy IP reveals its actual country.
 if ([string]::IsNullOrWhiteSpace($CookiesPath)) {
     $CookiesPath = Join-Path (Split-Path -Parent $PSScriptRoot) "cookies"
-}
-
-$cookieResult = Get-RandomCountryCookies -CookiesRoot $CookiesPath -ProxyName $selectedProxyName
-if ($null -ne $cookieResult) {
-    $payload["cookies"] = $cookieResult.Cookies
-    Write-Host "Loaded $($cookieResult.Cookies.Count) cookies for '$($cookieResult.Country)' from '$($cookieResult.File)'." -ForegroundColor Cyan
 }
 
 $payloadJson = $payload | ConvertTo-Json -Depth 10
@@ -501,6 +382,47 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
         if ($checkResponse.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($checkResponse.data.ip)) {
             Write-Host "Checked proxy connection: $($checkResponse.data.ip)" -ForegroundColor Green
             $createResponse | Add-Member -NotePropertyName checked_proxy_ip -NotePropertyValue $checkResponse.data.ip -Force
+
+            $proxyCountry = Get-ProxyCountry -IpAddress $checkResponse.data.ip
+            $updatedProfileName = "$($proxyCountry.Code)_$profileTimestamp"
+            $updatePayload = [ordered]@{ name = $updatedProfileName }
+
+            $cookieResult = Get-RandomCountryCookies -CookiesRoot $CookiesPath -CountryName $proxyCountry.Name
+            if ($null -ne $cookieResult) {
+                $updatePayload["cookies"] = $cookieResult.Cookies
+                Write-Host "Loaded $($cookieResult.Cookies.Count) cookies for '$($cookieResult.Country)' from '$($cookieResult.File)'." -ForegroundColor Cyan
+            }
+
+            if ($null -eq $Languages -or $Languages.Count -eq 0) {
+                $countryLanguage = $countryCodeLanguageMap[$proxyCountry.Code]
+                if (-not [string]::IsNullOrWhiteSpace($countryLanguage)) {
+                    $languageValue = Add-EnglishLanguage -Language $countryLanguage
+                    $updatePayload["language"] = $languageValue
+                }
+                else {
+                    Write-Warning "No language mapping exists for proxy country '$($proxyCountry.Code)'; keeping '$languageValue'."
+                }
+            }
+
+            $updateResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/update/$profileId" -Method Post -ContentType "application/json" -Body ($updatePayload | ConvertTo-Json) -TimeoutSec 60
+            if ($updateResponse.code -ne 0) {
+                $errorText = $updateResponse | ConvertTo-Json -Depth 10 -Compress
+                throw "Profile country settings update failed: $errorText"
+            }
+
+            $profileName = $updatedProfileName
+            Write-Host "Updated profile for $($proxyCountry.Name): name '$profileName', language '$languageValue'." -ForegroundColor Green
+            $createResponse | Add-Member -NotePropertyName checked_proxy_country -NotePropertyValue $proxyCountry.Name -Force
+            $createResponse | Add-Member -NotePropertyName checked_proxy_country_code -NotePropertyValue $proxyCountry.Code -Force
+
+            $profileInfo = Invoke-RestMethod -Uri "$ApiUrl/profile/getinfo/$profileId" -Method Get -TimeoutSec 30
+            if ($updatePayload.Contains("language") -and $profileInfo.code -eq 0) {
+                $expectedPrimaryLanguage = ($languageValue -split ",")[0].Trim()
+                $actualPrimaryLanguage = ([string]$profileInfo.data.language -split ",")[0].Trim()
+                if ($actualPrimaryLanguage -ine $expectedPrimaryLanguage) {
+                    Write-Warning "Undetectable did not apply language '$expectedPrimaryLanguage'; profile reports '$actualPrimaryLanguage'."
+                }
+            }
         }
         else {
             $errorText = $checkResponse | ConvertTo-Json -Depth 10 -Compress
