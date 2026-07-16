@@ -288,36 +288,52 @@ elseif ($hasMinResolution -and -not [string]::IsNullOrWhiteSpace($selectedConfig
 # Undetectable (configs may report non-standard screens, e.g. 2056x1329, that aren't valid
 # create-time resolutions).
 
-# Auto-select any saved proxy unless one was passed. Its actual country is resolved from the
-# checked connection after profile creation.
-if ([string]::IsNullOrWhiteSpace($Proxy)) {
-    $proxiesResponse = $null
-    try {
-        $proxiesResponse = Invoke-RestMethod -Uri "$ApiUrl/proxies/list" -Method Get -TimeoutSec 20
-    }
-    catch {
-        Write-Warning "Could not query proxies from $ApiUrl/proxies/list: $_"
-    }
-
-    if ($proxiesResponse -and $proxiesResponse.code -eq 0 -and $proxiesResponse.data) {
-        $availableProxies = @()
+# Resolve saved proxy metadata even when an ID was passed explicitly. DataImpulse port 823
+# rotates per request unless the same sessid is included in every connection.
+$selectedProxy = $null
+$availableProxies = @()
+try {
+    $proxiesResponse = Invoke-RestMethod -Uri "$ApiUrl/proxies/list" -Method Get -TimeoutSec 20
+    if ($proxiesResponse.code -eq 0 -and $proxiesResponse.data) {
         foreach ($proxyId in $proxiesResponse.data.PSObject.Properties.Name) {
             $proxyEntry = $proxiesResponse.data.$proxyId
             $availableProxies += [PSCustomObject]@{
-                Id   = $proxyId
-                Name = $proxyEntry.name
+                Id       = $proxyId
+                Name     = $proxyEntry.name
+                Type     = $proxyEntry.type
+                Host     = $proxyEntry.host
+                Port     = $proxyEntry.port
+                Login    = $proxyEntry.login
+                Password = $proxyEntry.password
             }
         }
-
-        if ($availableProxies.Count -gt 0) {
-            $selectedProxy = $availableProxies | Get-Random
-            $Proxy = $selectedProxy.Id
-            Write-Host "Selected proxy '$($selectedProxy.Name)'; country and language will be resolved after its connection check." -ForegroundColor Cyan
-        }
-        else {
-            Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
-        }
     }
+}
+catch {
+    Write-Warning "Could not query proxies from $ApiUrl/proxies/list: $_"
+}
+
+if ([string]::IsNullOrWhiteSpace($Proxy)) {
+    if ($availableProxies.Count -gt 0) {
+        $selectedProxy = $availableProxies | Get-Random
+        $Proxy = $selectedProxy.Id
+        Write-Host "Selected proxy '$($selectedProxy.Name)'; country and language will be resolved after its connection check." -ForegroundColor Cyan
+    }
+    else {
+        Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
+    }
+}
+else {
+    $selectedProxy = $availableProxies | Where-Object { $_.Id -eq $Proxy } | Select-Object -First 1
+}
+
+if ($selectedProxy -and $selectedProxy.Host -ieq "gw.dataimpulse.com" -and [int]$selectedProxy.Port -eq 823) {
+    $sessionId = [guid]::NewGuid().ToString("N").Substring(0, 16)
+    $sessionLogin = [regex]::Replace([string]$selectedProxy.Login, '(?i);sessid\.[^;]+', '')
+    $sessionLogin += ";sessid.$sessionId"
+    $proxyType = if ([string]::IsNullOrWhiteSpace($selectedProxy.Type)) { "http" } else { $selectedProxy.Type }
+    $Proxy = "${proxyType}://$($selectedProxy.Host):$($selectedProxy.Port):${sessionLogin}:$($selectedProxy.Password)"
+    Write-Host "Pinned DataImpulse proxy '$($selectedProxy.Name)' to session '$sessionId' for this workflow." -ForegroundColor Cyan
 }
 
 $languageValue = if ($null -ne $Languages -and $Languages.Count -gt 0) {
@@ -379,6 +395,7 @@ if (-not [string]::IsNullOrWhiteSpace($profileId)) {
 }
 
 if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -not [string]::IsNullOrWhiteSpace($profileId)) {
+    $countryRecreationStarted = $false
     try {
         $checkResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/checkconnection/$profileId" -Method Get -TimeoutSec 60
         if ($checkResponse.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($checkResponse.data.ip)) {
@@ -389,6 +406,7 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
 
             # profile/update does not apply the language field; delete and recreate so the
             # fingerprint is built with the correct locale from the start.
+            $countryRecreationStarted = $true
             $deleteResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/delete/$profileId" -Method Get -TimeoutSec 60
             if ($deleteResponse.code -ne 0) {
                 $errorText = $deleteResponse | ConvertTo-Json -Depth 10 -Compress
@@ -443,6 +461,16 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
                 Write-Host "Profile ID: $profileId" -ForegroundColor Green
             }
 
+            $finalCheckResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/checkconnection/$profileId" -Method Get -TimeoutSec 60
+            if ($finalCheckResponse.code -ne 0 -or [string]::IsNullOrWhiteSpace($finalCheckResponse.data.ip)) {
+                $errorText = $finalCheckResponse | ConvertTo-Json -Depth 10 -Compress
+                throw "Final profile proxy verification failed: $errorText"
+            }
+            if ($finalCheckResponse.data.ip -ne $checkResponse.data.ip) {
+                throw "Proxy IP changed between probe and final profile ($($checkResponse.data.ip) -> $($finalCheckResponse.data.ip)); DataImpulse sticky session was not applied."
+            }
+            Write-Host "Verified sticky proxy IP: $($finalCheckResponse.data.ip)" -ForegroundColor Green
+
             $createResponse | Add-Member -NotePropertyName checked_proxy_ip -NotePropertyValue $checkResponse.data.ip -Force
             $createResponse | Add-Member -NotePropertyName checked_proxy_country -NotePropertyValue $proxyCountry.Name -Force
             $createResponse | Add-Member -NotePropertyName checked_proxy_country_code -NotePropertyValue $proxyCountry.Code -Force
@@ -453,7 +481,10 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
         }
     }
     catch {
-        Write-Warning "Proxy connection check or country-based re-creation failed: $_"
+        if ($countryRecreationStarted) {
+            throw "Country-based profile re-creation failed: $_"
+        }
+        Write-Warning "Proxy connection check failed; keeping the probe profile as-is: $_"
     }
 }
 
