@@ -346,7 +346,7 @@ Add-PayloadValue -Payload $payload -Name "group" -Value $Group
 Add-PayloadValue -Payload $payload -Name "tags" -Value $Tags
 Add-PayloadValue -Payload $payload -Name "notes" -Value $Notes
 
-# Cookies are selected after the checked proxy IP reveals its actual country.
+# CookiesPath is resolved here so it is available to both the DryRun path and the post-check recreate.
 if ([string]::IsNullOrWhiteSpace($CookiesPath)) {
     $CookiesPath = Join-Path (Split-Path -Parent $PSScriptRoot) "cookies"
 }
@@ -360,6 +360,8 @@ if ($DryRun) {
     exit 0
 }
 
+# Create a probe profile; if the proxy check succeeds this will be deleted and replaced
+# with a new profile using the resolved country name, language, and cookies.
 $createResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/create" -Method Post -ContentType "application/json" -Body $payloadJson -TimeoutSec 60
 if ($createResponse.code -ne 0) {
     if ($createResponse.data.error -like "*permissions to create profiles*") {
@@ -370,10 +372,10 @@ if ($createResponse.code -ne 0) {
     throw "Profile creation failed: $errorText"
 }
 
-Write-Host "Created profile '$profileName'." -ForegroundColor Green
+Write-Host "Created probe profile '$profileName'." -ForegroundColor Cyan
 $profileId = $createResponse.data.profile_id
 if (-not [string]::IsNullOrWhiteSpace($profileId)) {
-    Write-Host "Profile ID: $profileId" -ForegroundColor Green
+    Write-Host "Profile ID: $profileId" -ForegroundColor Cyan
 }
 
 if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -not [string]::IsNullOrWhiteSpace($profileId)) {
@@ -381,56 +383,77 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
         $checkResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/checkconnection/$profileId" -Method Get -TimeoutSec 60
         if ($checkResponse.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($checkResponse.data.ip)) {
             Write-Host "Checked proxy connection: $($checkResponse.data.ip)" -ForegroundColor Green
-            $createResponse | Add-Member -NotePropertyName checked_proxy_ip -NotePropertyValue $checkResponse.data.ip -Force
 
             $proxyCountry = Get-ProxyCountry -IpAddress $checkResponse.data.ip
-            $updatedProfileName = "$($proxyCountry.Code)_$profileTimestamp"
-            $updatePayload = [ordered]@{ name = $updatedProfileName }
+            Write-Host "Proxy country: $($proxyCountry.Name) ($($proxyCountry.Code))" -ForegroundColor Cyan
 
-            $cookieResult = Get-RandomCountryCookies -CookiesRoot $CookiesPath -CountryName $proxyCountry.Name
-            if ($null -ne $cookieResult) {
-                $updatePayload["cookies"] = $cookieResult.Cookies
-                Write-Host "Loaded $($cookieResult.Cookies.Count) cookies for '$($cookieResult.Country)' from '$($cookieResult.File)'." -ForegroundColor Cyan
+            # profile/update does not apply the language field; delete and recreate so the
+            # fingerprint is built with the correct locale from the start.
+            $deleteResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/delete/$profileId" -Method Get -TimeoutSec 60
+            if ($deleteResponse.code -ne 0) {
+                $errorText = $deleteResponse | ConvertTo-Json -Depth 10 -Compress
+                throw "Could not delete the probe profile before re-creating with the correct country settings: $errorText"
             }
+            $profileId = $null
+
+            $profileName = "$($proxyCountry.Code)_$profileTimestamp"
 
             if ($null -eq $Languages -or $Languages.Count -eq 0) {
                 $countryLanguage = $countryCodeLanguageMap[$proxyCountry.Code]
                 if (-not [string]::IsNullOrWhiteSpace($countryLanguage)) {
                     $languageValue = Add-EnglishLanguage -Language $countryLanguage
-                    $updatePayload["language"] = $languageValue
                 }
                 else {
                     Write-Warning "No language mapping exists for proxy country '$($proxyCountry.Code)'; keeping '$languageValue'."
                 }
             }
 
-            $updateResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/update/$profileId" -Method Post -ContentType "application/json" -Body ($updatePayload | ConvertTo-Json) -TimeoutSec 60
-            if ($updateResponse.code -ne 0) {
-                $errorText = $updateResponse | ConvertTo-Json -Depth 10 -Compress
-                throw "Profile country settings update failed: $errorText"
+            $cookieResult = Get-RandomCountryCookies -CookiesRoot $CookiesPath -CountryName $proxyCountry.Name
+
+            $finalPayload = [ordered]@{
+                name     = $profileName
+                configid = $selectedConfig.Id
+                type     = $Type
+                cpu      = $Cpu
+                memory   = $Memory
+                language = $languageValue
+            }
+            Add-PayloadValue -Payload $finalPayload -Name "resolution" -Value $Resolution
+            Add-PayloadValue -Payload $finalPayload -Name "timezone" -Value $Timezone
+            Add-PayloadValue -Payload $finalPayload -Name "geolocation" -Value $Geolocation
+            Add-PayloadValue -Payload $finalPayload -Name "proxy" -Value $Proxy
+            Add-PayloadValue -Payload $finalPayload -Name "folder" -Value $Folder
+            Add-PayloadValue -Payload $finalPayload -Name "group" -Value $Group
+            Add-PayloadValue -Payload $finalPayload -Name "tags" -Value $Tags
+            Add-PayloadValue -Payload $finalPayload -Name "notes" -Value $Notes
+            if ($null -ne $cookieResult) {
+                $finalPayload["cookies"] = $cookieResult.Cookies
+                Write-Host "Loaded $($cookieResult.Cookies.Count) cookies for '$($cookieResult.Country)' from '$($cookieResult.File)'." -ForegroundColor Cyan
             }
 
-            $profileName = $updatedProfileName
-            Write-Host "Updated profile for $($proxyCountry.Name): name '$profileName', language '$languageValue'." -ForegroundColor Green
+            $createResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/create" -Method Post -ContentType "application/json" -Body ($finalPayload | ConvertTo-Json -Depth 10) -TimeoutSec 60
+            if ($createResponse.code -ne 0) {
+                $errorText = $createResponse | ConvertTo-Json -Depth 10 -Compress
+                throw "Re-creation with country settings failed: $errorText"
+            }
+
+            $profileId = $createResponse.data.profile_id
+            Write-Host "Created profile '$profileName' for $($proxyCountry.Name), language '$languageValue'." -ForegroundColor Green
+            if (-not [string]::IsNullOrWhiteSpace($profileId)) {
+                Write-Host "Profile ID: $profileId" -ForegroundColor Green
+            }
+
+            $createResponse | Add-Member -NotePropertyName checked_proxy_ip -NotePropertyValue $checkResponse.data.ip -Force
             $createResponse | Add-Member -NotePropertyName checked_proxy_country -NotePropertyValue $proxyCountry.Name -Force
             $createResponse | Add-Member -NotePropertyName checked_proxy_country_code -NotePropertyValue $proxyCountry.Code -Force
-
-            $profileInfo = Invoke-RestMethod -Uri "$ApiUrl/profile/getinfo/$profileId" -Method Get -TimeoutSec 30
-            if ($updatePayload.Contains("language") -and $profileInfo.code -eq 0) {
-                $expectedPrimaryLanguage = ($languageValue -split ",")[0].Trim()
-                $actualPrimaryLanguage = ([string]$profileInfo.data.language -split ",")[0].Trim()
-                if ($actualPrimaryLanguage -ine $expectedPrimaryLanguage) {
-                    Write-Warning "Undetectable did not apply language '$expectedPrimaryLanguage'; profile reports '$actualPrimaryLanguage'."
-                }
-            }
         }
         else {
             $errorText = $checkResponse | ConvertTo-Json -Depth 10 -Compress
-            Write-Warning "Profile was created, but its proxy connection check failed: $errorText"
+            Write-Warning "Proxy connection check failed; keeping the probe profile as-is: $errorText"
         }
     }
     catch {
-        Write-Warning "Profile was created, but its proxy connection could not be checked: $_"
+        Write-Warning "Proxy connection check or country-based re-creation failed: $_"
     }
 }
 
