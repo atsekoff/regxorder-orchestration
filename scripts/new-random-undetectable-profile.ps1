@@ -20,6 +20,7 @@ param (
     [string[]]$Tags = @("random"),
     [string]$Notes,
     [string]$CookiesPath,
+    [switch]$SkipProxyCheck,
     [switch]$DryRun
 )
 
@@ -493,6 +494,24 @@ $profileId = $createResponse.data.profile_id
 if (-not [string]::IsNullOrWhiteSpace($profileId)) {
     Write-Host "Profile ID: $profileId" -ForegroundColor Green
 }
+
+if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -not [string]::IsNullOrWhiteSpace($profileId)) {
+    try {
+        $checkResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/checkconnection/$profileId" -Method Get -TimeoutSec 60
+        if ($checkResponse.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($checkResponse.data.ip)) {
+            Write-Host "Checked proxy connection: $($checkResponse.data.ip)" -ForegroundColor Green
+            $createResponse | Add-Member -NotePropertyName checked_proxy_ip -NotePropertyValue $checkResponse.data.ip -Force
+        }
+        else {
+            $errorText = $checkResponse | ConvertTo-Json -Depth 10 -Compress
+            Write-Warning "Profile was created, but its proxy connection check failed: $errorText"
+        }
+    }
+    catch {
+        Write-Warning "Profile was created, but its proxy connection could not be checked: $_"
+    }
+}
+
 $createResponse | Add-Member -NotePropertyName profile_name -NotePropertyValue $profileName -Force
 $createResponse | Add-Member -NotePropertyName selected_os -NotePropertyValue $selectedConfig.Os -Force
 $createResponse | ConvertTo-Json -Depth 10
