@@ -148,6 +148,26 @@ function Stop-ProfileIfNeeded {
 }
 
 try {
+    try {
+        $cleanupCommand = @{
+            ApiUrl                = $ApiUrl
+            StartupTimeoutSeconds = $StartupTimeoutSeconds
+            Tag                   = "random"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) {
+            $cleanupCommand.UndetectablePath = $UndetectablePath
+        }
+
+        Write-Host "Cleaning up stale random profiles..." -ForegroundColor Cyan
+        & (Join-Path $PSScriptRoot "delete-undetectable-profiles.ps1") @cleanupCommand
+        if (-not $?) {
+            throw "Random profile cleanup script failed."
+        }
+    }
+    catch {
+        Write-Warning "Could not clean all stale random profiles; continuing: $_"
+    }
+
     $createCommand = @{
         ApiUrl                = $ApiUrl
         StartupTimeoutSeconds = $StartupTimeoutSeconds

@@ -91,13 +91,32 @@ function Test-TagMatch {
 function Invoke-ProfileDelete {
     param([string]$ProfileId)
 
-    $response = Invoke-RestMethod -Uri "$ApiUrl/profile/delete/$ProfileId" -Method Get -TimeoutSec 60
-    if ($response -and $response.PSObject.Properties.Name -contains "code" -and $response.code -ne 0) {
-        $errorText = $response | ConvertTo-Json -Depth 10 -Compress
-        throw "Profile delete failed: $errorText"
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $response = Invoke-RestMethod -Uri "$ApiUrl/profile/delete/$ProfileId" -Method Get -TimeoutSec 60
+            if (-not $response -or -not ($response.PSObject.Properties.Name -contains "code") -or $response.code -eq 0) {
+                return $response
+            }
+            $lastError = $response | ConvertTo-Json -Depth 10 -Compress
+        }
+        catch {
+            $lastError = $_
+        }
+
+        if ($attempt -eq 1) {
+            try {
+                Invoke-RestMethod -Uri "$ApiUrl/profile/stop/$ProfileId" -Method Get -TimeoutSec 30 | Out-Null
+            }
+            catch {
+            }
+        }
+        if ($attempt -lt 3) {
+            Start-Sleep -Seconds 1
+        }
     }
 
-    return $response
+    throw "Profile delete failed after 3 attempts: $lastError"
 }
 
 $Id = ConvertTo-StringArray -Value $Id
