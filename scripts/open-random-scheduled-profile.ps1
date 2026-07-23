@@ -81,11 +81,72 @@ function ConvertTo-ParameterHashtable {
     return $parameters
 }
 
+function ConvertTo-CurlConfigValue {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    if ($Value -match '[\r\n]') {
+        throw "Schedule request values cannot contain line breaks."
+    }
+
+    return $Value.Replace('\', '\\').Replace('"', '\"')
+}
+
+function Invoke-ScheduleApiRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][hashtable]$Headers
+    )
+
+    try {
+        return Invoke-RestMethod -Uri $Uri -Method Get -Headers $Headers -TimeoutSec 60
+    }
+    catch {
+        if ($_ -notmatch 'SSL/TLS|TLS alert|secure channel|ProtocolVersion') {
+            throw
+        }
+    }
+
+    if (-not (Get-Command "curl.exe" -ErrorAction SilentlyContinue)) {
+        throw "The schedule request failed TLS negotiation and curl.exe is unavailable. Install PowerShell 7 or curl."
+    }
+
+    $configLines = @("silent", "show-error", "fail", "request = `"GET`"")
+    foreach ($header in $Headers.GetEnumerator()) {
+        $headerValue = ConvertTo-CurlConfigValue -Value ([string]$header.Value)
+        $configLines += "header = `"$($header.Key): $headerValue`""
+    }
+    $configLines += "url = `"$(ConvertTo-CurlConfigValue -Value $Uri)`""
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "curl.exe"
+    $startInfo.Arguments = "--config -"
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $process.StandardInput.WriteLine(($configLines -join "`n"))
+    $process.StandardInput.Close()
+    $responseText = $process.StandardOutput.ReadToEnd()
+    $errorText = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    if ($process.ExitCode -ne 0) {
+        throw "Schedule request failed via curl.exe: $($errorText.Trim())"
+    }
+
+    return $responseText | ConvertFrom-Json -ErrorAction Stop
+}
+
 $fromDate = $From.Date
 $toDate = $To.Date
 if ($fromDate -gt $toDate) {
     throw "-From cannot be later than -To."
 }
+
+[Net.ServicePointManager]::SecurityProtocol =
+[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $headers = @{
     "x-ads-token"             = Get-RequiredUserEnvironmentVariable -Name "BETTINGPAIR_API_KEY"
@@ -94,7 +155,7 @@ $headers = @{
     Accept                    = "application/json"
 }
 $scheduleUri = "${ScheduleApiUrl}?from=$($fromDate.ToString('yyyy-MM-dd'))&to=$($toDate.ToString('yyyy-MM-dd'))"
-$schedule = Invoke-RestMethod -Uri $scheduleUri -Method Get -Headers $headers -TimeoutSec 60
+$schedule = Invoke-ScheduleApiRequest -Uri $scheduleUri -Headers $headers
 
 $requestedCountryCode = if ([string]::IsNullOrWhiteSpace($CountryCode)) { $null } else { $CountryCode.ToUpperInvariant() }
 $markets = @($schedule.schedule | Where-Object {
