@@ -110,7 +110,7 @@ function Invoke-ScheduleApiRequest {
         throw "The schedule request failed TLS negotiation and curl.exe is unavailable. Install PowerShell 7 or curl."
     }
 
-    $configLines = @("silent", "show-error", "fail", "request = `"GET`"")
+    $configLines = @("silent", "show-error", "fail", "ipv4", "request = `"GET`"")
     foreach ($header in $Headers.GetEnumerator()) {
         $headerValue = ConvertTo-CurlConfigValue -Value ([string]$header.Value)
         $configLines += "header = `"$($header.Key): $headerValue`""
@@ -133,6 +133,10 @@ function Invoke-ScheduleApiRequest {
     $process.WaitForExit()
 
     if ($process.ExitCode -ne 0) {
+        if ($errorText -match 'schannel|SEC_E_|SSL/TLS|TLS alert|handshake failed') {
+            throw "Windows Schannel could not establish TLS with portal.bettingpair.com, including the IPv4 curl fallback. This is an OS TLS/network path failure, not an API credential error. Install current Windows updates and check VPN, proxy, antivirus HTTPS inspection, and Schannel policy. curl.exe reported: $($errorText.Trim())"
+        }
+
         throw "Schedule request failed via curl.exe: $($errorText.Trim())"
     }
 
