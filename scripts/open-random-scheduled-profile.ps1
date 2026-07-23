@@ -4,6 +4,7 @@ param (
     [ValidatePattern("^[A-Za-z]{2}$")]
     [string]$CountryCode,
     [string]$ScheduleApiUrl = "https://portal.bettingpair.com/api/clicks/schedule",
+    [string]$ScheduleFetcherPath,
     [string]$ApiUrl = "http://localhost:25432",
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
@@ -16,6 +17,10 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ScheduleFetcherPath)) {
+    $ScheduleFetcherPath = Join-Path (Split-Path -Parent $PSScriptRoot) "bin\bettingpair-fetch.exe"
+}
 
 function Get-RequiredUserEnvironmentVariable {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -81,63 +86,43 @@ function ConvertTo-ParameterHashtable {
     return $parameters
 }
 
-function ConvertTo-CurlConfigValue {
-    param([Parameter(Mandatory = $true)][string]$Value)
-
-    if ($Value -match '[\r\n]') {
-        throw "Schedule request values cannot contain line breaks."
-    }
-
-    return $Value.Replace('\', '\\').Replace('"', '\"')
-}
-
 function Invoke-ScheduleApiRequest {
     param(
-        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$FetcherPath,
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$From,
+        [Parameter(Mandatory = $true)][string]$To,
         [Parameter(Mandatory = $true)][hashtable]$Headers
     )
 
+    if (-not (Test-Path -LiteralPath $FetcherPath -PathType Leaf)) {
+        throw "Schedule fetcher not found at '$FetcherPath'."
+    }
+
+    $environmentValues = @{
+        BETTINGPAIR_API_KEY           = [string]$Headers["x-ads-token"]
+        BETTINGPAIR_CLOUDFLARE_ID     = [string]$Headers["CF-Access-Client-Id"]
+        BETTINGPAIR_CLOUDFLARE_SECRET = [string]$Headers["CF-Access-Client-Secret"]
+    }
+    $originalValues = @{}
     try {
-        return Invoke-RestMethod -Uri $Uri -Method Get -Headers $Headers -TimeoutSec 60
+        foreach ($entry in $environmentValues.GetEnumerator()) {
+            $originalValues[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
+
+        $responseOutput = & $FetcherPath --from $From --to $To --url $Url 2>&1
+        $exitCode = $LASTEXITCODE
     }
-    catch {
-        if ($_ -notmatch 'SSL/TLS|TLS alert|secure channel|ProtocolVersion') {
-            throw
+    finally {
+        foreach ($entry in $originalValues.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
         }
     }
 
-    if (-not (Get-Command "curl.exe" -ErrorAction SilentlyContinue)) {
-        throw "The schedule request failed TLS negotiation and curl.exe is unavailable. Install PowerShell 7 or curl."
-    }
-
-    $configLines = @("silent", "show-error", "fail", "ipv4", "request = `"GET`"")
-    foreach ($header in $Headers.GetEnumerator()) {
-        $headerValue = ConvertTo-CurlConfigValue -Value ([string]$header.Value)
-        $configLines += "header = `"$($header.Key): $headerValue`""
-    }
-    $configLines += "url = `"$(ConvertTo-CurlConfigValue -Value $Uri)`""
-
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = "curl.exe"
-    $startInfo.Arguments = "--config -"
-    $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardInput = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-
-    $process = [System.Diagnostics.Process]::Start($startInfo)
-    $process.StandardInput.WriteLine(($configLines -join "`n"))
-    $process.StandardInput.Close()
-    $responseText = $process.StandardOutput.ReadToEnd()
-    $errorText = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
-
-    if ($process.ExitCode -ne 0) {
-        if ($errorText -match 'schannel|SEC_E_|SSL/TLS|TLS alert|handshake failed') {
-            throw "Windows Schannel could not establish TLS with portal.bettingpair.com, including the IPv4 curl fallback. This is an OS TLS/network path failure, not an API credential error. Install current Windows updates and check VPN, proxy, antivirus HTTPS inspection, and Schannel policy. curl.exe reported: $($errorText.Trim())"
-        }
-
-        throw "Schedule request failed via curl.exe: $($errorText.Trim())"
+    $responseText = ($responseOutput | Out-String).Trim()
+    if ($exitCode -ne 0) {
+        throw "Schedule fetcher failed with exit code ${exitCode}: $responseText"
     }
 
     return $responseText | ConvertFrom-Json -ErrorAction Stop
@@ -149,17 +134,13 @@ if ($fromDate -gt $toDate) {
     throw "-From cannot be later than -To."
 }
 
-[Net.ServicePointManager]::SecurityProtocol =
-[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-
 $headers = @{
     "x-ads-token"             = Get-RequiredUserEnvironmentVariable -Name "BETTINGPAIR_API_KEY"
     "CF-Access-Client-Id"     = Get-RequiredUserEnvironmentVariable -Name "BETTINGPAIR_CLOUDFLARE_ID"
     "CF-Access-Client-Secret" = Get-RequiredUserEnvironmentVariable -Name "BETTINGPAIR_CLOUDFLARE_SECRET"
     Accept                    = "application/json"
 }
-$scheduleUri = "${ScheduleApiUrl}?from=$($fromDate.ToString('yyyy-MM-dd'))&to=$($toDate.ToString('yyyy-MM-dd'))"
-$schedule = Invoke-ScheduleApiRequest -Uri $scheduleUri -Headers $headers
+$schedule = Invoke-ScheduleApiRequest -FetcherPath $ScheduleFetcherPath -Url $ScheduleApiUrl -From $fromDate.ToString('yyyy-MM-dd') -To $toDate.ToString('yyyy-MM-dd') -Headers $headers
 
 $requestedCountryCode = if ([string]::IsNullOrWhiteSpace($CountryCode)) { $null } else { $CountryCode.ToUpperInvariant() }
 $markets = @($schedule.schedule | Where-Object {

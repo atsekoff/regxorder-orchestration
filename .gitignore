@@ -1,5 +1,6 @@
 /main-sessions/
 /pre-sessions/
 /post-sessions/
+**/target/
 
 # Local debug helpers (not for the repo)
