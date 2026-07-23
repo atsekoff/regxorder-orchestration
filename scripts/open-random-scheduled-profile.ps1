@@ -194,7 +194,6 @@ if ($CreateProfileArgs) {
     }
 }
 $createCommand.CountryCode = $marketCountryCode
-$createCommand.StartPage = $marketUrl
 
 $createOutput = & (Join-Path $PSScriptRoot "new-random-undetectable-profile.ps1") @createCommand
 if (-not $?) {
@@ -214,6 +213,7 @@ $openCommand = @{
     ProfileStatePath      = $ProfileStatePath
     StartupTimeoutSeconds = $StartupTimeoutSeconds
     ProfileId             = $profileId
+    StartPages            = @($marketUrl)
 }
 if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) {
     $openCommand.UndetectablePath = $UndetectablePath

@@ -4,7 +4,8 @@ param (
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
     [int]$StartupTimeoutSeconds = 60,
-    [string]$ProfileId
+    [string]$ProfileId,
+    [string[]]$StartPages
 )
 
 $ErrorActionPreference = "Stop"
@@ -187,7 +188,12 @@ try {
     $startExceptionText = $null
 
     try {
-        $startResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/start/$profileId" -Method Get
+        $startUri = "$ApiUrl/profile/start/$profileId"
+        if (@($StartPages).Count -gt 0) {
+            $encodedStartPages = [uri]::EscapeDataString(($StartPages -join ","))
+            $startUri += "?start-pages=$encodedStartPages"
+        }
+        $startResponse = Invoke-RestMethod -Uri $startUri -Method Get
     }
     catch {
         $startExceptionText = $_.Exception.Message

@@ -17,7 +17,6 @@ param (
     [string]$Proxy,
     [ValidatePattern("^[A-Za-z]{2}$")]
     [string]$CountryCode,
-    [string]$StartPage,
     [string]$Folder = "Random",
     [string]$Group,
     [string[]]$Tags = @("random"),
@@ -266,13 +265,6 @@ function Get-UndetectableConfigsResponse {
 
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
 
-if (-not [string]::IsNullOrWhiteSpace($StartPage)) {
-    $startPageUri = $null
-    if (-not [uri]::TryCreate($StartPage, [System.UriKind]::Absolute, [ref]$startPageUri) -or $startPageUri.Scheme -notin @("http", "https")) {
-        throw "Invalid -StartPage '$StartPage'. Expected an absolute HTTP or HTTPS URL."
-    }
-}
-
 $expectedCountryCode = if ([string]::IsNullOrWhiteSpace($CountryCode)) { $null } else { $CountryCode.ToUpperInvariant() }
 
 $configsResponse = Get-UndetectableConfigsResponse -ApiUrl $ApiUrl -TimeoutSeconds $StartupTimeoutSeconds
@@ -441,7 +433,6 @@ Add-PayloadValue -Payload $payload -Name "resolution" -Value $Resolution
 Add-PayloadValue -Payload $payload -Name "timezone" -Value $Timezone
 Add-PayloadValue -Payload $payload -Name "geolocation" -Value $Geolocation
 Add-PayloadValue -Payload $payload -Name "proxy" -Value $Proxy
-Add-PayloadValue -Payload $payload -Name "startpage" -Value $StartPage
 Add-PayloadValue -Payload $payload -Name "folder" -Value $Folder
 Add-PayloadValue -Payload $payload -Name "group" -Value $Group
 Add-PayloadValue -Payload $payload -Name "tags" -Value $Tags
