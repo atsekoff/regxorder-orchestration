@@ -141,7 +141,7 @@ function Invoke-ScheduledEvent {
     try {
         while ([string]::IsNullOrWhiteSpace($profileId)) {
             try {
-                Write-Host "Preparing $($Event.Click.name)/$($Event.Click.country) profile for $($Event.Click.date) $($Event.Click.time)." -ForegroundColor Cyan
+                Write-Host "Preparing $($Event.Click.name)/$($Event.Click.country) profile for $($Event.Click.date) $($Event.Click.time); URL: $($Event.Click.url)" -ForegroundColor Cyan
                 $createCommand = @{
                     ApiUrl                = $ApiUrl
                     StartupTimeoutSeconds = $StartupTimeoutSeconds
@@ -171,7 +171,7 @@ function Invoke-ScheduledEvent {
 
         $delay = $Event.ScheduledUtc - [datetime]::UtcNow
         if ($delay.TotalMilliseconds -gt 0) {
-            Write-Host "Profile '$profileName' is ready; waiting until $($Event.Click.date) $($Event.Click.time) $($response.timezone)." -ForegroundColor Green
+            Write-Host "Profile '$profileName' is ready for $($Event.Click.url); waiting until $($Event.Click.date) $($Event.Click.time) $($response.timezone)." -ForegroundColor Green
             Start-Sleep -Milliseconds ([math]::Ceiling($delay.TotalMilliseconds))
         }
         elseif ($delay.TotalMinutes -lt -1) {
