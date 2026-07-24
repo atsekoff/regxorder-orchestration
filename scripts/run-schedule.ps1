@@ -3,7 +3,7 @@ param(
     [ValidateRange(1, 2147483647)]
     [int]$ScheduleNumber,
     [datetime]$From = (Get-Date).Date,
-    [datetime]$To = (Get-Date).Date.AddDays(1),
+    [datetime]$To = (Get-Date).Date.AddDays(6),
     [string]$ScheduleApiUrl = "https://portal.bettingpair.com/api/clicks/schedule",
     [string]$ScheduleFetcherPath,
     [string]$ApiUrl = "http://localhost:25432",
