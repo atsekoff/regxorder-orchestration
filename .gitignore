@@ -2,5 +2,7 @@
 /pre-sessions/
 /post-sessions/
 **/target/
+/schedule-raw-response.json
+/schedule-scatter.html
 
 # Local debug helpers (not for the repo)
