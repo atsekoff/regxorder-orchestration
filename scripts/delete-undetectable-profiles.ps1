@@ -1,7 +1,7 @@
 param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$UndetectablePath,
-    [int]$StartupTimeoutSeconds = 60,
+    [Nullable[int]]$StartupTimeoutSeconds,
     [string[]]$Id,
     [string[]]$Name,
     [string[]]$Tag,

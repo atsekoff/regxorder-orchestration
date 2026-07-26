@@ -1,7 +1,7 @@
 param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$UndetectablePath,
-    [int]$TimeoutSeconds = 60
+    [Nullable[int]]$TimeoutSeconds
 )
 
 $ErrorActionPreference = "Stop"

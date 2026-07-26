@@ -1,3 +1,5 @@
+$script:DefaultUndetectableStartupTimeoutSeconds = 300
+
 function Test-UndetectableApiReady {
     param(
         [Parameter(Mandatory = $true)]
@@ -18,10 +20,11 @@ function Wait-UndetectableApiReady {
         [Parameter(Mandatory = $true)]
         [string]$ApiUrl,
 
-        [int]$TimeoutSeconds = 60
+        [Nullable[int]]$TimeoutSeconds
     )
 
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $effectiveTimeoutSeconds = if ($null -eq $TimeoutSeconds) { $script:DefaultUndetectableStartupTimeoutSeconds } else { $TimeoutSeconds }
+    $deadline = (Get-Date).AddSeconds($effectiveTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if (Test-UndetectableApiReady -ApiUrl $ApiUrl) {
             return $true
@@ -156,7 +159,7 @@ function Start-UndetectableIfNeeded {
         [Parameter(Mandatory = $false)]
         [string]$UndetectablePath,
 
-        [int]$TimeoutSeconds = 60
+        [Nullable[int]]$TimeoutSeconds
     )
 
     if (Test-UndetectableApiReady -ApiUrl $ApiUrl) {
@@ -172,8 +175,9 @@ function Start-UndetectableIfNeeded {
     Write-Host "Starting Undetectable from $executablePath..." -ForegroundColor Cyan
     Start-Process -FilePath $executablePath -WorkingDirectory (Split-Path -Parent $executablePath) | Out-Null
 
-    if (-not (Wait-UndetectableApiReady -ApiUrl $ApiUrl -TimeoutSeconds $TimeoutSeconds)) {
-        throw "Started Undetectable, but the API at $ApiUrl was not ready after $TimeoutSeconds seconds."
+    $effectiveTimeoutSeconds = if ($null -eq $TimeoutSeconds) { $script:DefaultUndetectableStartupTimeoutSeconds } else { $TimeoutSeconds }
+    if (-not (Wait-UndetectableApiReady -ApiUrl $ApiUrl -TimeoutSeconds $effectiveTimeoutSeconds)) {
+        throw "Started Undetectable, but the API at $ApiUrl was not ready after $effectiveTimeoutSeconds seconds."
     }
 
     Write-Host "Undetectable API is ready." -ForegroundColor Green

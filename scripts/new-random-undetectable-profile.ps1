@@ -1,7 +1,7 @@
 param (
     [string]$ApiUrl = "http://localhost:25432",
     [string]$UndetectablePath,
-    [int]$StartupTimeoutSeconds = 60,
+    [Nullable[int]]$StartupTimeoutSeconds,
     [string]$Os,
     [string]$Browser,
     [ValidateSet("local", "cloud")]
@@ -23,7 +23,8 @@ param (
     [string]$Notes,
     [string]$CookiesPath,
     [switch]$SkipProxyCheck,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [int]$ConfigsTimeoutSeconds = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -246,7 +247,7 @@ function Get-RandomCountryCookies {
 function Get-UndetectableConfigsResponse {
     param(
         [Parameter(Mandatory = $true)][string]$ApiUrl,
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 60
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -267,9 +268,9 @@ Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -
 
 $expectedCountryCode = if ([string]::IsNullOrWhiteSpace($CountryCode)) { $null } else { $CountryCode.ToUpperInvariant() }
 
-$configsResponse = Get-UndetectableConfigsResponse -ApiUrl $ApiUrl -TimeoutSeconds $StartupTimeoutSeconds
+$configsResponse = Get-UndetectableConfigsResponse -ApiUrl $ApiUrl -TimeoutSeconds $ConfigsTimeoutSeconds
 if ($configsResponse.code -ne 0 -or -not $configsResponse.data -or $configsResponse.data.PSObject.Properties.Count -eq 0) {
-    throw "Failed to fetch Undetectable configurations from $ApiUrl/configslist after waiting up to $StartupTimeoutSeconds seconds."
+    throw "Failed to fetch Undetectable configurations from $ApiUrl/configslist after waiting up to $ConfigsTimeoutSeconds seconds."
 }
 
 $configs = @()
