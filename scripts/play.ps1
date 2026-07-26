@@ -7,6 +7,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+$focusFailureExitCode = 42
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $repoRoot
@@ -155,7 +156,7 @@ foreach ($sessionPath in $playbackQueue) {
     }
     catch {
         Write-Host "Focus failed for playback session $sessionPath`: $_" -ForegroundColor Red
-        exit 1
+        exit $focusFailureExitCode
     }
 
     & (Join-Path $repoRoot "regxorder-cli.exe") @("play", "--input", $sessionPath, "--stop-hotkey", "ctrl+shift+f10")

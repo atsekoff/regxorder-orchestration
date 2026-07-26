@@ -8,6 +8,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+$focusFailureExitCode = 42
 
 function ConvertTo-IntervalSeconds {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -77,6 +78,7 @@ function Invoke-Playback {
     Write-Host "Starting playback run at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')." -ForegroundColor Cyan
     & $scriptPath @scriptArgs
     $runExitCode = $LASTEXITCODE
+    $script:lastPlaybackExitCode = $runExitCode
     if ($runExitCode -ne 0) {
         Write-Host "Playback run exited with code $runExitCode." -ForegroundColor Red
     }
@@ -113,20 +115,22 @@ else {
 Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
 
 while ($true) {
-    if ($runNow) {
-        Invoke-Playback
-        $runNow = $false
+    if (-not $runNow) {
+        $delaySeconds = if ($minimumSeconds -eq $maximumSeconds) {
+            $minimumSeconds
+        }
+        else {
+            Get-Random -Minimum $minimumSeconds -Maximum ($maximumSeconds + 1)
+        }
+
+        $nextRun = (Get-Date).AddSeconds($delaySeconds)
+        Write-Host "Next playback run scheduled for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))." -ForegroundColor Cyan
+        Wait-WithCountdown -Seconds $delaySeconds
     }
 
-    $delaySeconds = if ($minimumSeconds -eq $maximumSeconds) {
-        $minimumSeconds
-    }
-    else {
-        Get-Random -Minimum $minimumSeconds -Maximum ($maximumSeconds + 1)
-    }
-
-    $nextRun = (Get-Date).AddSeconds($delaySeconds)
-    Write-Host "Next playback run scheduled for $($nextRun.ToString('yyyy-MM-dd HH:mm:ss'))." -ForegroundColor Cyan
-    Wait-WithCountdown -Seconds $delaySeconds
     Invoke-Playback
+    $runNow = $lastPlaybackExitCode -eq $focusFailureExitCode
+    if ($runNow) {
+        Write-Host "Focus failed; retrying playback immediately." -ForegroundColor Yellow
+    }
 }
