@@ -14,6 +14,7 @@ param(
     [int]$OpenDurationSeconds = 120,
     [ValidateRange(1, 3600)]
     [int]$PreparationRetrySeconds = 10,
+    [string]$ProxyNamePattern,
     [switch]$DryRun,
 
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -89,6 +90,29 @@ function ConvertTo-ParameterHashtable {
     return $parameters
 }
 
+function Get-ScheduledProxyNamePattern {
+    param(
+        [Parameter(Mandatory = $true)][string]$CountryCode,
+        [string]$AdditionalPattern
+    )
+
+    $normalizedCode = $CountryCode.ToUpperInvariant()
+    $countryNames = @($normalizedCode)
+    try { $countryNames += ([System.Globalization.RegionInfo]::new($normalizedCode)).EnglishName } catch {}
+    switch ($normalizedCode) {
+        "GB" { $countryNames += @("UK", "United Kingdom") }
+        "US" { $countryNames += @("USA", "United States") }
+    }
+
+    $countryAlternatives = @($countryNames | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join "|"
+    $countryPattern = "(^|[^A-Z])(?:$countryAlternatives)(?=$|[^A-Z])"
+    if ([string]::IsNullOrWhiteSpace($AdditionalPattern)) {
+        return "(?i)$countryPattern"
+    }
+
+    return "(?i)^(?=.*(?:$AdditionalPattern))(?=.*(?:$countryPattern)).*$"
+}
+
 function ConvertFrom-ScriptJsonOutput {
     param([object[]]$Output)
 
@@ -134,25 +158,26 @@ function Remove-Profile {
 }
 
 function Invoke-ScheduledEvent {
-    param([object]$Event)
+    param([object]$ScheduledEvent)
 
     $profileId = $null
     $profileStarted = $false
     try {
         while ([string]::IsNullOrWhiteSpace($profileId)) {
             try {
-                Write-Host "Preparing $($Event.Click.name)/$($Event.Click.country) profile for $($Event.Click.date) $($Event.Click.time); URL: $($Event.Click.url)" -ForegroundColor Cyan
+                Write-Host "Preparing $($ScheduledEvent.Click.name)/$($ScheduledEvent.Click.country) profile for $($ScheduledEvent.Click.date) $($ScheduledEvent.Click.time); URL: $($ScheduledEvent.Click.url)" -ForegroundColor Cyan
                 $createCommand = @{
-                    ApiUrl                = $ApiUrl
-                    StartupTimeoutSeconds = $StartupTimeoutSeconds
-                    CountryCode           = ([string]$Event.Click.country).ToUpperInvariant()
-                    Tags                  = @("random", "schedule", "schedule-$ScheduleNumber")
+                    ApiUrl                   = $ApiUrl
+                    StartupTimeoutSeconds    = $StartupTimeoutSeconds
+                    Tags                     = @("random", "schedule", "schedule-$ScheduleNumber")
                 }
                 if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) { $createCommand.UndetectablePath = $UndetectablePath }
                 foreach ($parameter in (ConvertTo-ParameterHashtable -Arguments $CreateProfileArgs).GetEnumerator()) {
                     $createCommand[$parameter.Key] = $parameter.Value
                 }
-                $createCommand.CountryCode = ([string]$Event.Click.country).ToUpperInvariant()
+                $eventCountryCode = ([string]$ScheduledEvent.Click.country).ToUpperInvariant()
+                $createCommand.ProxyNamePattern = Get-ScheduledProxyNamePattern -CountryCode $eventCountryCode -AdditionalPattern $ProxyNamePattern
+                $createCommand.ExpectedProxyCountryCode = $eventCountryCode
 
                 $createOutput = & (Join-Path $PSScriptRoot "new-random-undetectable-profile.ps1") @createCommand
                 if (-not $?) { throw "Profile creation script failed." }
@@ -161,7 +186,7 @@ function Invoke-ScheduledEvent {
                 $profileName = if ([string]::IsNullOrWhiteSpace([string]$createResponse.profile_name)) { $profileId } else { [string]$createResponse.profile_name }
             }
             catch {
-                $remainingSeconds = ($Event.ScheduledUtc - [datetime]::UtcNow).TotalSeconds
+                $remainingSeconds = ($ScheduledEvent.ScheduledUtc - [datetime]::UtcNow).TotalSeconds
                 if ($remainingSeconds -le 0) { throw }
                 $retryDelay = [math]::Min($PreparationRetrySeconds, [math]::Ceiling($remainingSeconds))
                 Write-Warning "Profile preparation failed; retrying in $retryDelay seconds: $_"
@@ -169,9 +194,9 @@ function Invoke-ScheduledEvent {
             }
         }
 
-        $delay = $Event.ScheduledUtc - [datetime]::UtcNow
+        $delay = $ScheduledEvent.ScheduledUtc - [datetime]::UtcNow
         if ($delay.TotalMilliseconds -gt 0) {
-            Write-Host "Profile '$profileName' is ready for $($Event.Click.url); waiting until $($Event.Click.date) $($Event.Click.time) $($response.timezone)." -ForegroundColor Green
+            Write-Host "Profile '$profileName' is ready for $($ScheduledEvent.Click.url); waiting until $($ScheduledEvent.Click.date) $($ScheduledEvent.Click.time) $($response.timezone)." -ForegroundColor Green
             Start-Sleep -Milliseconds ([math]::Ceiling($delay.TotalMilliseconds))
         }
         elseif ($delay.TotalMinutes -lt -1) {
@@ -183,7 +208,7 @@ function Invoke-ScheduledEvent {
             ProfileStatePath      = $ProfileStatePath
             StartupTimeoutSeconds = $StartupTimeoutSeconds
             ProfileId             = $profileId
-            StartPages            = @([string]$Event.Click.url)
+            StartPages            = @([string]$ScheduledEvent.Click.url)
         }
         if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) { $openCommand.UndetectablePath = $UndetectablePath }
         & (Join-Path $PSScriptRoot "open-undetectable.ps1") @openCommand
@@ -234,9 +259,9 @@ if ($DryRun) {
 }
 
 $failures = 0
-foreach ($event in $remaining) {
+foreach ($scheduledEvent in $remaining) {
     try {
-        Invoke-ScheduledEvent -Event $event
+        Invoke-ScheduledEvent -ScheduledEvent $scheduledEvent
     }
     catch {
         $failures++

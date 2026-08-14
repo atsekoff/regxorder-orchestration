@@ -14,9 +14,10 @@ param (
     [string[]]$Languages,
     [string]$Timezone,
     [string]$Geolocation,
-    [string]$Proxy,
+    [string]$ProxyNamePattern,
+    [Parameter(DontShow)]
     [ValidatePattern("^[A-Za-z]{2}$")]
-    [string]$CountryCode,
+    [string]$ExpectedProxyCountryCode,
     [string]$Folder = "Random",
     [string]$Group,
     [string[]]$Tags = @("random"),
@@ -150,23 +151,17 @@ function Resolve-CountryLanguage {
     return $null
 }
 
-function Test-ProxyNameCountryCode {
+function Test-ProxyNamePattern {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string]$CountryCode
+        [Parameter(Mandatory = $true)][string]$Pattern
     )
 
-    return $Name -match ("(?i)(^|[^A-Z])" + [regex]::Escape($CountryCode) + "([^A-Z]|$)")
-}
-
-function Get-CountryName {
-    param([Parameter(Mandatory = $true)][string]$CountryCode)
-
     try {
-        return ([System.Globalization.RegionInfo]::new($CountryCode)).EnglishName
+        return $Name -match $Pattern
     }
     catch {
-        return $CountryCode.ToUpperInvariant()
+        throw "Invalid proxy name pattern '$Pattern': $_"
     }
 }
 
@@ -176,6 +171,42 @@ function Get-ProxyCountry {
     $response = Invoke-RestMethod -Uri "https://ipwho.is/$IpAddress" -Method Get -TimeoutSec 20
     if (-not $response.success -or [string]::IsNullOrWhiteSpace($response.country_code)) {
         throw "Country lookup failed for proxy IP '$IpAddress'."
+    }
+
+    return [PSCustomObject]@{
+        Code = $response.country_code.ToUpperInvariant()
+        Name = $response.country
+    }
+}
+
+function Get-SavedProxyCountry {
+    param([Parameter(Mandatory = $true)][object]$Proxy)
+
+    if ([string]::IsNullOrWhiteSpace($Proxy.Host) -or [string]::IsNullOrWhiteSpace($Proxy.Port)) {
+        throw "Saved proxy '$($Proxy.Name)' does not expose a host and port for geolocation lookup."
+    }
+
+    if ([string]$Proxy.Type -notmatch '^(?i:https?)$') {
+        throw "Saved proxy '$($Proxy.Name)' has unsupported type '$($Proxy.Type)'; only HTTP proxies support automatic geolocation lookup."
+    }
+
+    $proxyUri = "http://$($Proxy.Host):$($Proxy.Port)"
+    $request = @{ Uri = "https://ipwho.is/"; Method = "Get"; Proxy = $proxyUri; TimeoutSec = 30 }
+    if (-not [string]::IsNullOrWhiteSpace($Proxy.Login)) {
+        $request.ProxyCredential = [System.Management.Automation.PSCredential]::new(
+            $Proxy.Login,
+            (ConvertTo-SecureString -String $Proxy.Password -AsPlainText -Force)
+        )
+    }
+
+    try {
+        $response = Invoke-RestMethod @request
+    }
+    catch {
+        throw "Failed to determine the country for saved proxy '$($Proxy.Name)': $_"
+    }
+    if (-not $response.success -or [string]::IsNullOrWhiteSpace($response.country_code)) {
+        throw "Country lookup through saved proxy '$($Proxy.Name)' failed."
     }
 
     return [PSCustomObject]@{
@@ -266,8 +297,6 @@ function Get-UndetectableConfigsResponse {
 
 Start-UndetectableIfNeeded -ApiUrl $ApiUrl -UndetectablePath $UndetectablePath -TimeoutSeconds $StartupTimeoutSeconds
 
-$expectedCountryCode = if ([string]::IsNullOrWhiteSpace($CountryCode)) { $null } else { $CountryCode.ToUpperInvariant() }
-
 $configsResponse = Get-UndetectableConfigsResponse -ApiUrl $ApiUrl -TimeoutSeconds $ConfigsTimeoutSeconds
 if ($configsResponse.code -ne 0 -or -not $configsResponse.data -or $configsResponse.data.PSObject.Properties.Count -eq 0) {
     throw "Failed to fetch Undetectable configurations from $ApiUrl/configslist after waiting up to $ConfigsTimeoutSeconds seconds."
@@ -351,8 +380,13 @@ try {
         foreach ($proxyId in $proxiesResponse.data.PSObject.Properties.Name) {
             $proxyEntry = $proxiesResponse.data.$proxyId
             $availableProxies += [PSCustomObject]@{
-                Id   = $proxyId
-                Name = $proxyEntry.name
+                Id       = $proxyId
+                Name     = $proxyEntry.name
+                Type     = $proxyEntry.type
+                Host     = $proxyEntry.host
+                Port     = $proxyEntry.port
+                Login    = $proxyEntry.login
+                Password = $proxyEntry.password
             }
         }
     }
@@ -361,41 +395,28 @@ catch {
     Write-Warning "Could not query proxies from $ApiUrl/proxies/list: $_"
 }
 
-if ([string]::IsNullOrWhiteSpace($Proxy)) {
-    $eligibleProxies = $availableProxies
-    if (-not [string]::IsNullOrWhiteSpace($expectedCountryCode)) {
-        $eligibleProxies = @($availableProxies | Where-Object { Test-ProxyNameCountryCode -Name $_.Name -CountryCode $expectedCountryCode })
-        if ($eligibleProxies.Count -eq 0) {
-            throw "No saved proxy name contains country code '$expectedCountryCode'."
-        }
-    }
-
-    if ($eligibleProxies.Count -gt 0) {
-        $selectedProxy = $eligibleProxies | Get-Random
-        $Proxy = $selectedProxy.Id
-        Write-Host "Selected proxy '$($selectedProxy.Name)'." -ForegroundColor Cyan
-    }
-    else {
-        Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
+$eligibleProxies = $availableProxies
+if (-not [string]::IsNullOrWhiteSpace($ProxyNamePattern)) {
+    $eligibleProxies = @($availableProxies | Where-Object { Test-ProxyNamePattern -Name $_.Name -Pattern $ProxyNamePattern })
+    if ($eligibleProxies.Count -eq 0) {
+        throw "No saved proxy name matched pattern '$ProxyNamePattern'."
     }
 }
+
+if ($eligibleProxies.Count -gt 0) {
+    $selectedProxy = $eligibleProxies | Get-Random
+    Write-Host "Selected proxy '$($selectedProxy.Name)'." -ForegroundColor Cyan
+}
 else {
-    $selectedProxy = $availableProxies | Where-Object { $_.Id -eq $Proxy } | Select-Object -First 1
-    if (-not [string]::IsNullOrWhiteSpace($expectedCountryCode)) {
-        if ($null -eq $selectedProxy) {
-            throw "Proxy '$Proxy' is not a saved proxy and cannot be matched to country '$expectedCountryCode'."
-        }
-        if (-not (Test-ProxyNameCountryCode -Name $selectedProxy.Name -CountryCode $expectedCountryCode)) {
-            throw "Proxy '$($selectedProxy.Name)' does not contain country code '$expectedCountryCode'."
-        }
-    }
+    Write-Warning "No proxies found in the proxy manager; creating profile without an auto-selected proxy."
 }
 
 $profileCountry = $null
-if (-not [string]::IsNullOrWhiteSpace($expectedCountryCode)) {
-    $profileCountry = [PSCustomObject]@{
-        Code = $expectedCountryCode
-        Name = Get-CountryName -CountryCode $expectedCountryCode
+if ($null -ne $selectedProxy) {
+    $profileCountry = Get-SavedProxyCountry -Proxy $selectedProxy
+    Write-Host "Selected proxy country: $($profileCountry.Name) ($($profileCountry.Code))." -ForegroundColor Cyan
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedProxyCountryCode) -and $profileCountry.Code -ne $ExpectedProxyCountryCode.ToUpperInvariant()) {
+        throw "Selected proxy '$($selectedProxy.Name)' resolves to $($profileCountry.Code), expected $($ExpectedProxyCountryCode.ToUpperInvariant())."
     }
 }
 
@@ -433,7 +454,7 @@ $payload = [ordered]@{
 Add-PayloadValue -Payload $payload -Name "resolution" -Value $Resolution
 Add-PayloadValue -Payload $payload -Name "timezone" -Value $Timezone
 Add-PayloadValue -Payload $payload -Name "geolocation" -Value $Geolocation
-Add-PayloadValue -Payload $payload -Name "proxy" -Value $Proxy
+Add-PayloadValue -Payload $payload -Name "proxy" -Value $selectedProxy.Id
 Add-PayloadValue -Payload $payload -Name "folder" -Value $Folder
 Add-PayloadValue -Payload $payload -Name "group" -Value $Group
 Add-PayloadValue -Payload $payload -Name "tags" -Value $Tags
@@ -468,14 +489,14 @@ if (-not [string]::IsNullOrWhiteSpace($profileId)) {
     Write-Host "Profile ID: $profileId" -ForegroundColor Green
 }
 
-if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -not [string]::IsNullOrWhiteSpace($profileId)) {
+if (-not $SkipProxyCheck -and $null -ne $selectedProxy -and -not [string]::IsNullOrWhiteSpace($profileId)) {
     $profileCountryMismatch = $null
     try {
         $checkResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/checkconnection/$profileId" -Method Get -TimeoutSec 60
         if ($checkResponse.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($checkResponse.data.ip)) {
             $verifiedCountry = Get-ProxyCountry -IpAddress $checkResponse.data.ip
-            if (-not [string]::IsNullOrWhiteSpace($expectedCountryCode) -and $verifiedCountry.Code -ne $expectedCountryCode) {
-                $profileCountryMismatch = "Created profile proxy resolved to $($verifiedCountry.Code), expected $expectedCountryCode."
+            if ($null -ne $profileCountry -and $verifiedCountry.Code -ne $profileCountry.Code) {
+                $profileCountryMismatch = "Created profile proxy resolved to $($verifiedCountry.Code), but resolved to $($profileCountry.Code) before creation."
             }
             else {
                 Write-Host "Verified profile proxy: $($checkResponse.data.ip) ($($verifiedCountry.Code))." -ForegroundColor Green
@@ -500,4 +521,11 @@ if (-not $SkipProxyCheck -and -not [string]::IsNullOrWhiteSpace($Proxy) -and -no
 
 $createResponse | Add-Member -NotePropertyName profile_name -NotePropertyValue $profileName -Force
 $createResponse | Add-Member -NotePropertyName selected_os -NotePropertyValue $selectedConfig.Os -Force
+if ($null -ne $selectedProxy) {
+    $createResponse | Add-Member -NotePropertyName selected_proxy_name -NotePropertyValue $selectedProxy.Name -Force
+}
+if ($null -ne $profileCountry) {
+    $createResponse | Add-Member -NotePropertyName selected_proxy_country -NotePropertyValue $profileCountry.Name -Force
+    $createResponse | Add-Member -NotePropertyName selected_proxy_country_code -NotePropertyValue $profileCountry.Code -Force
+}
 $createResponse | ConvertTo-Json -Depth 10

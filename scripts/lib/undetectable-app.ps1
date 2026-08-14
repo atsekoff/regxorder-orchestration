@@ -3,14 +3,23 @@ $script:DefaultUndetectableStartupTimeoutSeconds = 300
 function Test-UndetectableApiReady {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ApiUrl
+        [string]$ApiUrl,
+
+        [ref]$LastError
     )
 
     try {
         $response = Invoke-RestMethod -Uri "$ApiUrl/list" -Method Get -TimeoutSec 2 -ErrorAction Stop
-        return ($response -and $response.code -eq 0)
+        if ($response -and $response.code -eq 0) {
+            $LastError.Value = $null
+            return $true
+        }
+
+        $LastError.Value = if ($response) { $response | ConvertTo-Json -Depth 5 -Compress } else { "Empty response." }
+        return $false
     }
     catch {
+        $LastError.Value = $_.Exception.Message
         return $false
     }
 }
@@ -24,16 +33,25 @@ function Wait-UndetectableApiReady {
     )
 
     $effectiveTimeoutSeconds = if ($null -eq $TimeoutSeconds) { $script:DefaultUndetectableStartupTimeoutSeconds } else { $TimeoutSeconds }
-    $deadline = (Get-Date).AddSeconds($effectiveTimeoutSeconds)
+    $startedAt = Get-Date
+    $deadline = $startedAt.AddSeconds($effectiveTimeoutSeconds)
+    $lastError = $null
+    $nextProgressAt = $startedAt
     while ((Get-Date) -lt $deadline) {
-        if (Test-UndetectableApiReady -ApiUrl $ApiUrl) {
-            return $true
+        if (Test-UndetectableApiReady -ApiUrl $ApiUrl -LastError ([ref]$lastError)) {
+            return [PSCustomObject]@{ Ready = $true; LastError = $null }
+        }
+
+        if ((Get-Date) -ge $nextProgressAt) {
+            $elapsedSeconds = [int]((Get-Date) - $startedAt).TotalSeconds
+            Write-Host "Waiting for Undetectable API at $ApiUrl (${elapsedSeconds}s elapsed): $lastError" -ForegroundColor Yellow
+            $nextProgressAt = (Get-Date).AddSeconds(10)
         }
 
         Start-Sleep -Seconds 1
     }
 
-    return $false
+    return [PSCustomObject]@{ Ready = $false; LastError = $lastError }
 }
 
 function Get-UndetectableShortcutTargets {
@@ -162,7 +180,8 @@ function Start-UndetectableIfNeeded {
         [Nullable[int]]$TimeoutSeconds
     )
 
-    if (Test-UndetectableApiReady -ApiUrl $ApiUrl) {
+    $lastError = $null
+    if (Test-UndetectableApiReady -ApiUrl $ApiUrl -LastError ([ref]$lastError)) {
         Write-Host "Undetectable API is already available." -ForegroundColor Green
         return
     }
@@ -176,8 +195,9 @@ function Start-UndetectableIfNeeded {
     Start-Process -FilePath $executablePath -WorkingDirectory (Split-Path -Parent $executablePath) | Out-Null
 
     $effectiveTimeoutSeconds = if ($null -eq $TimeoutSeconds) { $script:DefaultUndetectableStartupTimeoutSeconds } else { $TimeoutSeconds }
-    if (-not (Wait-UndetectableApiReady -ApiUrl $ApiUrl -TimeoutSeconds $effectiveTimeoutSeconds)) {
-        throw "Started Undetectable, but the API at $ApiUrl was not ready after $effectiveTimeoutSeconds seconds."
+    $readiness = Wait-UndetectableApiReady -ApiUrl $ApiUrl -TimeoutSeconds $effectiveTimeoutSeconds
+    if (-not $readiness.Ready) {
+        throw "Started Undetectable, but the API at $ApiUrl was not ready after $effectiveTimeoutSeconds seconds. Last error: $($readiness.LastError)"
     }
 
     Write-Host "Undetectable API is ready." -ForegroundColor Green

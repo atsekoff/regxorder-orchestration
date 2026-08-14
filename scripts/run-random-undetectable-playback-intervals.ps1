@@ -72,11 +72,50 @@ function Wait-WithCountdown {
     Write-Host "`rNext run in 00:00:00   "
 }
 
+function ConvertTo-PlaybackCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [string[]]$Arguments
+    )
+
+    $knownParameters = (Get-Command $ScriptPath).Parameters.Keys
+    $command = @{}
+    $createProfileArgs = [System.Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $Arguments.Count; $index++) {
+        $argument = $Arguments[$index]
+        if ($argument -notmatch '^-{1,2}(.+)$') {
+            throw "Unexpected playback argument '$argument'. Expected -Name [value]."
+        }
+
+        $name = $Matches[1]
+        $values = @()
+        while ($index + 1 -lt $Arguments.Count -and $Arguments[$index + 1] -notmatch '^-') {
+            $values += $Arguments[++$index]
+        }
+
+        if ($knownParameters -contains $name -and $name -ne "CreateProfileArgs") {
+            $command[$name] = if ($values.Count -eq 0) { $true } elseif ($values.Count -eq 1) { $values[0] } else { $values }
+            continue
+        }
+
+        $createProfileArgs.Add("-$name")
+        foreach ($value in $values) {
+            $createProfileArgs.Add($value)
+        }
+    }
+
+    if ($createProfileArgs.Count -gt 0) {
+        $command.CreateProfileArgs = $createProfileArgs.ToArray()
+    }
+    return $command
+}
+
 function Invoke-Playback {
     $scriptPath = Join-Path $PSScriptRoot "run-random-undetectable-playback.ps1"
     $scriptArgs = @($PlaybackArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $playbackCommand = ConvertTo-PlaybackCommand -ScriptPath $scriptPath -Arguments $scriptArgs
     Write-Host "Starting playback run at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')." -ForegroundColor Cyan
-    & $scriptPath @scriptArgs
+    & $scriptPath @playbackCommand
     $runExitCode = $LASTEXITCODE
     $script:lastPlaybackExitCode = $runExitCode
     if ($runExitCode -ne 0) {
