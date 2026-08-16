@@ -1,5 +1,5 @@
 param (
-    [string]$ApiUrl = "http://localhost:25432",
+    [string]$ApiUrl = "http://localhost:25325",
     [string]$UndetectablePath,
     [int]$StartupTimeoutSeconds = 60,
     [switch]$TestConnectivity,
@@ -82,22 +82,22 @@ Write-Host "Found $($proxyIds.Count) proxies." -ForegroundColor Green
 $proxies = foreach ($id in $proxyIds) {
     $p = $proxiesData.$id
     [PSCustomObject]@{
-        Id            = $id
-        Name          = $p.name
-        Type          = $p.type
-        Host          = $p.host
-        Port          = $p.port
-        Login         = $p.login
-        HasPassword   = -not [string]::IsNullOrWhiteSpace($p.password)
-        IpChangeLink  = $p.ipchangelink
+        Id           = $id
+        Name         = $p.name
+        Type         = $p.type
+        Host         = $p.host
+        Port         = $p.port
+        Login        = $p.login
+        HasPassword  = -not [string]::IsNullOrWhiteSpace($p.password)
+        IpChangeLink = $p.ipchangelink
     }
 }
 
 Write-Host "`n[Step 3] Proxy Summary..." -ForegroundColor Yellow
 $proxies |
-    Format-Table Id, Name, Type, @{ Name = "Endpoint"; Expression = { "$($_.Host):$($_.Port)" } }, Login, HasPassword -AutoSize |
-    Out-String |
-    Write-Host
+Format-Table Id, Name, Type, @{ Name = "Endpoint"; Expression = { "$($_.Host):$($_.Port)" } }, Login, HasPassword -AutoSize |
+Out-String |
+Write-Host
 
 Write-Host "Breakdown by type:" -ForegroundColor Cyan
 $proxies | Group-Object Type | ForEach-Object { Write-Host " - $($_.Name): $($_.Count)" }

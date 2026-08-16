@@ -1,6 +1,6 @@
 # --- Configuration ---
 param (
-    [string]$ApiUrl = "http://localhost:25432",
+    [string]$ApiUrl = "http://localhost:25325",
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
     [Nullable[int]]$StartupTimeoutSeconds,

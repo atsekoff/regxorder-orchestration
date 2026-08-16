@@ -6,7 +6,7 @@ param(
     [datetime]$To = (Get-Date).Date.AddDays(6),
     [string]$ScheduleApiUrl = "https://portal.bettingpair.com/api/clicks/schedule",
     [string]$ScheduleFetcherPath,
-    [string]$ApiUrl = "http://localhost:25432",
+    [string]$ApiUrl = "http://localhost:25325",
     [string]$ProfileStatePath = (Join-Path $env:TEMP "orchestration-undetectable-profile.txt"),
     [string]$UndetectablePath,
     [Nullable[int]]$StartupTimeoutSeconds,
