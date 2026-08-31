@@ -2,8 +2,6 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateRange(1, 2147483647)]
     [int]$ScheduleNumber,
-    [datetime]$From = (Get-Date).Date,
-    [datetime]$To = (Get-Date).Date.AddDays(6),
     [string]$ScheduleApiUrl = "https://portal.bettingpair.com/api/clicks/schedule",
     [string]$ScheduleFetcherPath,
     [string]$ApiUrl = "http://localhost:25325",
@@ -14,6 +12,8 @@ param(
     [int]$OpenDurationSeconds = 120,
     [ValidateRange(1, 3600)]
     [int]$PreparationRetrySeconds = 10,
+    [ValidateRange(1, 86400)]
+    [int]$RefreshIntervalSeconds = 300,
     [string]$ProxyNamePattern,
     [switch]$DryRun,
 
@@ -196,7 +196,7 @@ function Invoke-ScheduledEvent {
 
         $delay = $ScheduledEvent.ScheduledUtc - [datetime]::UtcNow
         if ($delay.TotalMilliseconds -gt 0) {
-            Write-Host "Profile '$profileName' is ready for $($ScheduledEvent.Click.url); waiting until $($ScheduledEvent.Click.date) $($ScheduledEvent.Click.time) $($response.timezone)." -ForegroundColor Green
+            Write-Host "Profile '$profileName' is ready for $($ScheduledEvent.Click.url); waiting until $($ScheduledEvent.Click.date) $($ScheduledEvent.Click.time) $($ScheduledEvent.Timezone)." -ForegroundColor Green
             Start-Sleep -Milliseconds ([math]::Ceiling($delay.TotalMilliseconds))
         }
         elseif ($delay.TotalMinutes -lt -1) {
@@ -229,37 +229,72 @@ function Invoke-ScheduledEvent {
     }
 }
 
-if ($From.Date -gt $To.Date) { throw "-From cannot be later than -To." }
-$response = Invoke-ScheduleApiRequest -FetcherPath $ScheduleFetcherPath -Url $ScheduleApiUrl -FromDate $From.ToString("yyyy-MM-dd") -ToDate $To.ToString("yyyy-MM-dd")
-if ($null -eq $response.schedules) { throw "The API did not return the expected 'schedules' collection." }
-$schedule = @($response.schedules | Where-Object { [int]$_.pc -eq $ScheduleNumber })
-if ($schedule.Count -ne 1) {
-    $available = @($response.schedules | ForEach-Object { $_.pc }) -join ", "
-    throw "Schedule $ScheduleNumber was not found. Available schedule numbers: $available"
+function Get-ScheduleSnapshot {
+    $fetchFrom = (Get-Date).Date
+    $fetchTo = $fetchFrom.AddDays(6)
+    $response = Invoke-ScheduleApiRequest -FetcherPath $ScheduleFetcherPath -Url $ScheduleApiUrl -FromDate $fetchFrom.ToString("yyyy-MM-dd") -ToDate $fetchTo.ToString("yyyy-MM-dd")
+    if ($null -eq $response.schedules) { throw "The API did not return the expected 'schedules' collection." }
+
+    $schedule = @($response.schedules | Where-Object { [int]$_.pc -eq $ScheduleNumber })
+    if ($schedule.Count -ne 1) {
+        $available = @($response.schedules | ForEach-Object { $_.pc }) -join ", "
+        throw "Schedule $ScheduleNumber was not found. Available schedule numbers: $available"
+    }
+
+    $timezone = [TimeZoneInfo]::FindSystemTimeZoneById([string]$response.timezone)
+    $events = @($schedule[0].clicks | ForEach-Object {
+            $localTime = [datetime]::ParseExact("$($_.date) $($_.time)", "yyyy-MM-dd HH:mm", [Globalization.CultureInfo]::InvariantCulture)
+            [PSCustomObject]@{
+                Click        = $_
+                ScheduledUtc = [TimeZoneInfo]::ConvertTimeToUtc([datetime]::SpecifyKind($localTime, [DateTimeKind]::Unspecified), $timezone)
+                Timezone     = [string]$response.timezone
+            }
+        } | Sort-Object ScheduledUtc)
+
+    $minimumGap = [int]$response.machineGapMin
+    for ($index = 1; $index -lt $events.Count; $index++) {
+        $gap = ($events[$index].ScheduledUtc - $events[$index - 1].ScheduledUtc).TotalMinutes
+        if ($gap -lt $minimumGap) { throw "Schedule $ScheduleNumber has a $gap-minute conflict at $($events[$index].Click.date) $($events[$index].Click.time)." }
+    }
+
+    return [PSCustomObject]@{
+        Events     = @($events | Where-Object { $_.ScheduledUtc -gt [datetime]::UtcNow })
+        TotalCount = $events.Count
+        From       = $fetchFrom
+        To         = $fetchTo
+        Timezone   = [string]$response.timezone
+    }
 }
 
-$timezone = [TimeZoneInfo]::FindSystemTimeZoneById([string]$response.timezone)
-$events = @($schedule[0].clicks | ForEach-Object {
-        $localTime = [datetime]::ParseExact("$($_.date) $($_.time)", "yyyy-MM-dd HH:mm", [Globalization.CultureInfo]::InvariantCulture)
-        [PSCustomObject]@{ Click = $_; ScheduledUtc = [TimeZoneInfo]::ConvertTimeToUtc([datetime]::SpecifyKind($localTime, [DateTimeKind]::Unspecified), $timezone) }
-    } | Sort-Object ScheduledUtc)
-if ($events.Count -eq 0) { throw "Schedule $ScheduleNumber contains no events in the requested range." }
-
-$minimumGap = [int]$response.machineGapMin
-for ($index = 1; $index -lt $events.Count; $index++) {
-    $gap = ($events[$index].ScheduledUtc - $events[$index - 1].ScheduledUtc).TotalMinutes
-    if ($gap -lt $minimumGap) { throw "Schedule $ScheduleNumber has a $gap-minute conflict at $($events[$index].Click.date) $($events[$index].Click.time)." }
-}
-
-$remaining = @($events | Where-Object { $_.ScheduledUtc -gt [datetime]::UtcNow })
-Write-Host "Schedule ${ScheduleNumber}: $($events.Count) events, $($remaining.Count) remaining, timezone $($response.timezone)." -ForegroundColor Cyan
 if ($DryRun) {
-    $remaining | ForEach-Object { [PSCustomObject]@{ At = "$($_.Click.date) $($_.Click.time)"; Market = $_.Click.name; Country = $_.Click.country; Url = $_.Click.url } } | Format-Table -AutoSize
+    $snapshot = Get-ScheduleSnapshot
+    Write-Host "Schedule ${ScheduleNumber}: $($snapshot.TotalCount) events, $($snapshot.Events.Count) remaining, timezone $($snapshot.Timezone)." -ForegroundColor Cyan
+    $snapshot.Events | ForEach-Object { [PSCustomObject]@{ At = "$($_.Click.date) $($_.Click.time)"; Market = $_.Click.name; Country = $_.Click.country; Url = $_.Click.url } } | Format-Table -AutoSize
     exit 0
 }
 
+$pendingEvents = @()
+$attempted = 0
 $failures = 0
-foreach ($scheduledEvent in $remaining) {
+while ($true) {
+    try {
+        $snapshot = Get-ScheduleSnapshot
+        $pendingEvents = @($snapshot.Events)
+        Write-Host "Schedule ${ScheduleNumber} refreshed for $($snapshot.From.ToString('yyyy-MM-dd')) through $($snapshot.To.ToString('yyyy-MM-dd')): $($pendingEvents.Count) future events, timezone $($snapshot.Timezone)." -ForegroundColor Cyan
+    }
+    catch {
+        Write-Warning "Schedule refresh failed; keeping the current queue: $_"
+    }
+
+    if ($pendingEvents.Count -eq 0) {
+        Write-Host "No future events are queued; refreshing in $RefreshIntervalSeconds seconds." -ForegroundColor Cyan
+        Start-Sleep -Seconds $RefreshIntervalSeconds
+        continue
+    }
+
+    $scheduledEvent = $pendingEvents[0]
+    $pendingEvents = @($pendingEvents | Select-Object -Skip 1)
+    $attempted++
     try {
         Invoke-ScheduledEvent -ScheduledEvent $scheduledEvent
     }
@@ -267,7 +302,5 @@ foreach ($scheduledEvent in $remaining) {
         $failures++
         Write-Warning "Scheduled event failed; continuing: $_"
     }
+    Write-Host "Events attempted: $attempted; failures: $failures. Refreshing the schedule." -ForegroundColor $(if ($failures) { "Yellow" } else { "Green" })
 }
-
-Write-Host "Schedule $ScheduleNumber is complete. Events attempted: $($remaining.Count); failures: $failures." -ForegroundColor $(if ($failures) { "Yellow" } else { "Green" })
-if ($failures) { exit 1 }
