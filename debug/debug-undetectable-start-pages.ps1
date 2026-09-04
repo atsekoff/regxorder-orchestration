@@ -7,10 +7,42 @@ param (
     [string]$ProfileId,
 
     [string]$Url = "https://example.com/",
-    [string]$ApiUrl = "http://localhost:25325"
+    [string]$ApiUrl = "http://localhost:25325",
+    [switch]$InspectOnly
 )
 
 $ErrorActionPreference = "Stop"
+
+function Find-StartPageProperty {
+    param(
+        [object]$Value,
+        [string]$Path = "data"
+    )
+
+    if ($null -eq $Value -or $Value -is [string] -or $Value.GetType().IsPrimitive) {
+        return
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [System.Management.Automation.PSCustomObject]) {
+        $index = 0
+        foreach ($item in $Value) {
+            Find-StartPageProperty -Value $item -Path "$Path[$index]"
+            $index++
+        }
+        return
+    }
+
+    foreach ($property in $Value.PSObject.Properties) {
+        $propertyPath = "$Path.$($property.Name)"
+        if ($property.Name -match "(?i:start|page|home|url)") {
+            [PSCustomObject]@{
+                Path  = $propertyPath
+                Value = $property.Value | ConvertTo-Json -Depth 10 -Compress
+            }
+        }
+        Find-StartPageProperty -Value $property.Value -Path $propertyPath
+    }
+}
 
 $profilesResponse = Invoke-RestMethod -Uri "$ApiUrl/list" -Method Get -TimeoutSec 20
 if ($profilesResponse.code -ne 0 -or -not $profilesResponse.data) {
@@ -25,7 +57,23 @@ if ($PSCmdlet.ParameterSetName -eq "ByName") {
     $ProfileId = $matches[0].Name
 }
 
-$startUri = "$ApiUrl/profile/start/$ProfileId?start-pages=$([uri]::EscapeDataString($Url))"
+if ($InspectOnly) {
+    $profileResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/getinfo/$ProfileId" -Method Get -TimeoutSec 20
+    if ($profileResponse.code -ne 0 -or -not $profileResponse.data) {
+        throw "Failed to retrieve profile '$ProfileId'."
+    }
+
+    $properties = @(Find-StartPageProperty -Value $profileResponse.data)
+    if ($properties.Count -eq 0) {
+        Write-Host "No start/page/home/url properties were exposed by /profile/getinfo/$ProfileId." -ForegroundColor Yellow
+    }
+    else {
+        $properties | Format-Table -AutoSize | Out-String | Write-Host
+    }
+    return
+}
+
+$startUri = "$ApiUrl/profile/start/${ProfileId}?start-pages=$([uri]::EscapeDataString($Url))"
 Write-Host "Request: GET $startUri" -ForegroundColor Cyan
 $response = Invoke-RestMethod -Uri $startUri -Method Get -TimeoutSec 60
 Write-Host "Response:" -ForegroundColor Cyan
