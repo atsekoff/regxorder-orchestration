@@ -82,6 +82,58 @@ function Test-ProfileAlreadyRunningError {
     return $false
 }
 
+function Open-ProfilePages {
+    param(
+        [Parameter(Mandatory = $true)][string]$ApiUrl,
+        [Parameter(Mandatory = $true)][string]$ProfileId,
+        [Parameter(Mandatory = $true)][string[]]$Pages,
+        [int]$MaxAttempts = 10,
+        [int]$RetryDelayMilliseconds = 500
+    )
+
+    $pageList = @($Pages)
+    for ($pageIndex = 0; $pageIndex -lt $pageList.Count; $pageIndex++) {
+        $page = $pageList[$pageIndex]
+        $parsedPage = $null
+        $isValidPage = [uri]::TryCreate($page, [UriKind]::Absolute, [ref]$parsedPage)
+        if (-not $isValidPage -or $null -eq $parsedPage -or $parsedPage.Scheme -notin @("http", "https")) {
+            throw "Start page must be an absolute HTTP or HTTPS URL: '$page'."
+        }
+
+        if ($pageIndex -gt 0) {
+            $newTabResponse = Invoke-RestMethod -Uri "$ApiUrl/browser/opentab/$ProfileId" -Method Get -TimeoutSec 20
+            if ($newTabResponse.code -ne 0) {
+                throw "Failed to open a new tab for profile '$ProfileId': $($newTabResponse | ConvertTo-Json -Depth 10 -Compress)"
+            }
+        }
+
+        $body = @{ url = $parsedPage.AbsoluteUri } | ConvertTo-Json -Compress
+        $lastError = $null
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            try {
+                $openResponse = Invoke-RestMethod -Uri "$ApiUrl/browser/openurl/$ProfileId" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 20
+                if ($openResponse.code -eq 0) {
+                    Write-Host "Opened '$($parsedPage.AbsoluteUri)' in profile '$ProfileId'." -ForegroundColor Green
+                    $lastError = $null
+                    break
+                }
+                $lastError = $openResponse | ConvertTo-Json -Depth 10 -Compress
+            }
+            catch {
+                $lastError = $_.Exception.Message
+            }
+
+            if ($attempt -lt $MaxAttempts) {
+                Start-Sleep -Milliseconds $RetryDelayMilliseconds
+            }
+        }
+
+        if ($null -ne $lastError) {
+            throw "Failed to open '$page' in profile '$ProfileId' after $MaxAttempts attempts: $lastError"
+        }
+    }
+}
+
 if (Test-Path -LiteralPath $ProfileStatePath) {
     Remove-Item -LiteralPath $ProfileStatePath -Force -ErrorAction SilentlyContinue
 }
@@ -188,12 +240,7 @@ try {
     $startExceptionText = $null
 
     try {
-        $startUri = "$ApiUrl/profile/start/$profileId"
-        if (@($StartPages).Count -gt 0) {
-            $encodedStartPages = [uri]::EscapeDataString(($StartPages -join ","))
-            $startUri += "?start-pages=$encodedStartPages"
-        }
-        $startResponse = Invoke-RestMethod -Uri $startUri -Method Get
+        $startResponse = Invoke-RestMethod -Uri "$ApiUrl/profile/start/$profileId" -Method Get
     }
     catch {
         $startExceptionText = $_.Exception.Message
@@ -215,6 +262,11 @@ try {
         }
         else {
             Write-Host "Profile is already running. Treating as success at $profileDevice/$profileResolution." -ForegroundColor Green
+        }
+
+        $pages = @($StartPages | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($pages.Count -gt 0) {
+            Open-ProfilePages -ApiUrl $ApiUrl -ProfileId $profileId -Pages $pages
         }
     }
     else {
