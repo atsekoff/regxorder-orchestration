@@ -167,9 +167,9 @@ function Invoke-ScheduledEvent {
             try {
                 Write-Host "Preparing $($ScheduledEvent.Click.name)/$($ScheduledEvent.Click.country) profile for $($ScheduledEvent.Click.date) $($ScheduledEvent.Click.time); URL: $($ScheduledEvent.Click.url)" -ForegroundColor Cyan
                 $createCommand = @{
-                    ApiUrl                   = $ApiUrl
-                    StartupTimeoutSeconds    = $StartupTimeoutSeconds
-                    Tags                     = @("random", "schedule", "schedule-$ScheduleNumber")
+                    ApiUrl                = $ApiUrl
+                    StartupTimeoutSeconds = $StartupTimeoutSeconds
+                    Tags                  = @("random", "schedule", "schedule-$ScheduleNumber")
                 }
                 if (-not [string]::IsNullOrWhiteSpace($UndetectablePath)) { $createCommand.UndetectablePath = $UndetectablePath }
                 foreach ($parameter in (ConvertTo-ParameterHashtable -Arguments $CreateProfileArgs).GetEnumerator()) {
