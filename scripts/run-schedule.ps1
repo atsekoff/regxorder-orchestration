@@ -13,6 +13,8 @@ param(
     [ValidateRange(1, 3600)]
     [int]$PreparationRetrySeconds = 10,
     [ValidateRange(1, 86400)]
+    [int]$PreparationLeadSeconds = 300,
+    [ValidateRange(1, 86400)]
     [int]$RefreshIntervalSeconds = 300,
     [string]$ProxyNamePattern,
     [switch]$DryRun,
@@ -230,6 +232,7 @@ function Invoke-ScheduledEvent {
 }
 
 function Get-ScheduleSnapshot {
+    $snapshotUtc = [datetime]::UtcNow
     $fetchFrom = (Get-Date).Date
     $fetchTo = $fetchFrom.AddDays(6)
     $response = Invoke-ScheduleApiRequest -FetcherPath $ScheduleFetcherPath -Url $ScheduleApiUrl -FromDate $fetchFrom.ToString("yyyy-MM-dd") -ToDate $fetchTo.ToString("yyyy-MM-dd")
@@ -258,7 +261,7 @@ function Get-ScheduleSnapshot {
     }
 
     return [PSCustomObject]@{
-        Events     = @($events | Where-Object { $_.ScheduledUtc -gt [datetime]::UtcNow })
+        Events     = @($events | Where-Object { $_.ScheduledUtc -gt $snapshotUtc })
         TotalCount = $events.Count
         From       = $fetchFrom
         To         = $fetchTo
@@ -277,13 +280,15 @@ $pendingEvents = @()
 $attempted = 0
 $failures = 0
 while ($true) {
-    try {
-        $snapshot = Get-ScheduleSnapshot
-        $pendingEvents = @($snapshot.Events)
-        Write-Host "Schedule ${ScheduleNumber} refreshed for $($snapshot.From.ToString('yyyy-MM-dd')) through $($snapshot.To.ToString('yyyy-MM-dd')): $($pendingEvents.Count) future events, timezone $($snapshot.Timezone)." -ForegroundColor Cyan
-    }
-    catch {
-        Write-Warning "Schedule refresh failed; keeping the current queue: $_"
+    if ($pendingEvents.Count -eq 0 -or ($pendingEvents[0].ScheduledUtc - [datetime]::UtcNow).TotalSeconds -gt $PreparationLeadSeconds) {
+        try {
+            $snapshot = Get-ScheduleSnapshot
+            $pendingEvents = @($snapshot.Events)
+            Write-Host "Schedule ${ScheduleNumber} refreshed for $($snapshot.From.ToString('yyyy-MM-dd')) through $($snapshot.To.ToString('yyyy-MM-dd')): $($pendingEvents.Count) future events, timezone $($snapshot.Timezone)." -ForegroundColor Cyan
+        }
+        catch {
+            Write-Warning "Schedule refresh failed; keeping the current queue: $_"
+        }
     }
 
     if ($pendingEvents.Count -eq 0) {
@@ -293,6 +298,14 @@ while ($true) {
     }
 
     $scheduledEvent = $pendingEvents[0]
+    $secondsUntilPreparation = ($scheduledEvent.ScheduledUtc - [datetime]::UtcNow).TotalSeconds - $PreparationLeadSeconds
+    if ($secondsUntilPreparation -gt 0) {
+        $refreshDelay = [math]::Min($RefreshIntervalSeconds, $secondsUntilPreparation)
+        Write-Host "Next event is at $($scheduledEvent.Click.date) $($scheduledEvent.Click.time); refreshing in $([math]::Ceiling($refreshDelay)) seconds." -ForegroundColor Cyan
+        Start-Sleep -Milliseconds ([math]::Ceiling($refreshDelay * 1000))
+        continue
+    }
+
     $pendingEvents = @($pendingEvents | Select-Object -Skip 1)
     $attempted++
     try {
@@ -302,5 +315,5 @@ while ($true) {
         $failures++
         Write-Warning "Scheduled event failed; continuing: $_"
     }
-    Write-Host "Events attempted: $attempted; failures: $failures. Refreshing the schedule." -ForegroundColor $(if ($failures) { "Yellow" } else { "Green" })
+    Write-Host "Events attempted: $attempted; failures: $failures. Checking the next event." -ForegroundColor $(if ($failures) { "Yellow" } else { "Green" })
 }
